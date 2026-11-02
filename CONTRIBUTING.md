@@ -1,15 +1,34 @@
 # Contributing
 
 This repository is developed like a production project, even though it has a single author.
-Nothing is committed straight to `main`.
+Nothing is committed straight to `main` or `dev`.
+
+## Branching model
+
+| Branch | Purpose | Who merges into it |
+| --- | --- | --- |
+| `main` | Released, demo-ready state. Only changes through a `dev` -> `main` pull request. | `dev` (when everything is ready) |
+| `dev` | Integration branch. Always green; the base of all work. | feature branches |
+| `<type>/<short-description>` | One change: a feature, a fix, a chore. Short-lived. | branched from `dev` |
+
+```
+main  ●───────────────────────────●  (release: dev -> main, merge commit)
+       \                         /
+dev     ●──●────●────●────●────●
+            \  /      \  /
+feat/..      ●          ●
+```
 
 ## Workflow
 
-1. Branch from an up-to-date `main`: `git switch -c <type>/<short-description>`.
+1. Branch from an up-to-date `dev`: `git switch dev && git pull && git switch -c <type>/<short-description>`.
 2. Commit in small steps using [Conventional Commits](https://www.conventionalcommits.org/).
-3. Push the branch and open a pull request into `main`; fill in the PR template.
-4. Wait for CI to pass, then merge with **squash** so `main` keeps one commit per change.
-5. Delete the branch after merging.
+3. Push the branch and open a pull request **into `dev`**; fill in the PR template.
+4. Wait for CI to pass, then merge with **squash**, so `dev` keeps one commit per change.
+5. Delete the feature branch after merging.
+6. When `dev` is ready for a release or a defense milestone, open a pull request `dev` -> `main`
+   and merge it with a **merge commit** (not squash), so the history of `dev` is preserved.
+7. A hotfix on `main` is branched from `main`, merged into `main`, and then merged back into `dev`.
 
 ### Branch types
 
@@ -45,9 +64,10 @@ pre-commit run --all-files  # run every hook once on the whole repository
 | Lint and format (TypeScript) | `eslint`, `prettier` | pre-commit, CI |
 | Unit tests | `pytest`, `vitest` | CI |
 | Secret scan | `gitleaks` | pre-commit |
-| Dependency audit | `pip-audit`, `npm audit` | CI |
+| Dependency audit | `pip-audit`, `pnpm audit` | CI |
 
 ## Branch protection (recommended GitHub settings)
 
-On `main`: require a pull request, require the CI checks to pass, require branches to be up to date,
-and allow squash merging only.
+On both `main` and `dev`: require a pull request, require the CI checks to pass, and require
+branches to be up to date. Allow **squash** merging on `dev`; allow **merge commits** on `main`.
+Set `dev` as the default branch so new pull requests target it automatically.

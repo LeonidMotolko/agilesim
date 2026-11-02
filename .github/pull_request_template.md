@@ -12,6 +12,7 @@
 
 ## Checklist
 
+- [ ] Branch was created from `dev` and this PR targets `dev` (only `dev` -> `main` targets `main`)
 - [ ] Branch name follows `type/short-description`
 - [ ] Commits follow Conventional Commits
 - [ ] `pre-commit run --all-files` passes
