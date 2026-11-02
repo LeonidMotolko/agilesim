@@ -1,0 +1,7 @@
+# Keep LF in the repository on every OS (the team works on Windows).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary
+*.pptx binary
+*.docx binary
