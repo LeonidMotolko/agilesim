@@ -1,6 +1,6 @@
 """Fixtures for tests that run against a real PostgreSQL database."""
 
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 
 import pytest
@@ -47,7 +47,7 @@ def db(engine: Engine) -> Iterator[Session]:
 
 
 @contextmanager
-def as_role(session: Session, role: str) -> Iterator[None]:
+def as_role(session: Session, role: str) -> Generator[None]:
     """Run the enclosed statements with the privileges of a database role."""
     session.flush()
     session.execute(sa.text(f"SET LOCAL ROLE {role}"))

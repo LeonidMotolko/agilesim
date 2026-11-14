@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
 from agilesim.db.enums import CardColumnState, EventSource, EventStatus
@@ -112,7 +112,7 @@ def test_join_code_is_unique(db: Session) -> None:
 
 
 def test_session_status_is_restricted(db: Session) -> None:
-    with pytest.raises(sa.exc.StatementError), db.begin_nested():
+    with pytest.raises(StatementError), db.begin_nested():
         f.make_session(db, status="archived")
 
 
