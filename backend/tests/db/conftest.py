@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import Engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from agilesim.db import migrate
@@ -55,3 +56,16 @@ def as_role(session: Session, role: str) -> Generator[None]:
         yield
     finally:
         session.execute(sa.text("RESET ROLE"))
+
+
+@contextmanager
+def failing(
+    session: Session, error: type[Exception] = IntegrityError, match: str | None = None
+) -> Generator[None]:
+    """Expect ``error`` from the enclosed statements and roll back only to a savepoint.
+
+    Autoflush is off so that pending objects are flushed *inside* the block, where the failure
+    is caught, and the session stays usable afterwards.
+    """
+    with pytest.raises(error, match=match), session.no_autoflush, session.begin_nested():
+        yield

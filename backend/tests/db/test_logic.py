@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from agilesim.db.enums import CardColumnState
 from agilesim.db.models import CardMovement, DiceRoll, GameSession, Participant, Team
 from tests.db import factories as f
-from tests.db.conftest import as_role
+from tests.db.conftest import as_role, failing
 
 pytestmark = pytest.mark.db
 
@@ -26,7 +26,7 @@ def test_a_logged_movement_cannot_be_updated(db: Session) -> None:
     card = f.make_card(db, f.make_team(db), 104, 100)
     movement = f.move(db, card, "analysis", day=1, state=READY)
 
-    with pytest.raises(IntegrityError, match="append-only"), db.begin_nested():
+    with failing(db, IntegrityError, match="append-only"):
         db.execute(sa.update(CardMovement).where(CardMovement.id == movement.id).values(day=2))
 
 
@@ -34,7 +34,7 @@ def test_a_logged_movement_cannot_be_deleted(db: Session) -> None:
     card = f.make_card(db, f.make_team(db), 104, 100)
     movement = f.move(db, card, "analysis", day=1, state=READY)
 
-    with pytest.raises(IntegrityError, match="append-only"), db.begin_nested():
+    with failing(db, IntegrityError, match="append-only"):
         db.execute(sa.delete(CardMovement).where(CardMovement.id == movement.id))
 
 
@@ -45,7 +45,7 @@ def test_a_dice_roll_cannot_be_changed(db: Session) -> None:
     db.add(roll)
     db.flush()
 
-    with pytest.raises(IntegrityError, match="append-only"), db.begin_nested():
+    with failing(db, IntegrityError, match="append-only"):
         db.execute(sa.update(DiceRoll).where(DiceRoll.id == roll.id).values(value=6))
 
 
@@ -98,7 +98,7 @@ def test_a_movement_from_the_wrong_position_is_refused(db: Session) -> None:
     )
     db.add(stale)
 
-    with pytest.raises(IntegrityError, match="not where the movement says"), db.begin_nested():
+    with failing(db, IntegrityError, match="not where the movement says"):
         db.flush()
 
 
@@ -309,7 +309,7 @@ def test_every_table_and_view_is_readable_by_app_read(db: Session) -> None:
         )
     ).all()
 
-    assert len(names) >= 22
+    assert len(names) >= 21  # 17 tables without facilitators + 4 views
     for name in names:
         granted = db.scalar(
             sa.text("SELECT has_table_privilege('app_read', :n, 'SELECT')"), {"n": f"public.{name}"}
@@ -335,7 +335,7 @@ def test_app_read_cannot_select_the_email_column(db: Session) -> None:
     f.make_facilitator(db)
 
     with as_role(db, "app_read"):
-        with pytest.raises(DBAPIError, match="permission denied"), db.begin_nested():
+        with failing(db, DBAPIError, match="permission denied"):
             db.execute(sa.text("SELECT email FROM facilitators"))
         masked = db.execute(sa.text("SELECT email_masked FROM facilitators_masked")).all()
 
@@ -346,7 +346,7 @@ def test_app_read_cannot_write(db: Session) -> None:
     session = f.make_session(db)
 
     with as_role(db, "app_read"):
-        with pytest.raises(DBAPIError, match="permission denied"), db.begin_nested():
+        with failing(db, DBAPIError, match="permission denied"):
             db.execute(sa.text("UPDATE game_sessions SET name = 'x'"))
         assert db.scalar(sa.text("SELECT name FROM game_sessions")) == session.name
 
@@ -356,9 +356,9 @@ def test_app_write_plays_the_game_but_cannot_rewrite_history(db: Session) -> Non
 
     with as_role(db, "app_write"):
         f.move(db, card, "analysis", day=1, state=READY)
-        with pytest.raises(DBAPIError, match="permission denied"), db.begin_nested():
+        with failing(db, DBAPIError, match="permission denied"):
             db.execute(sa.text("UPDATE card_movements SET day = 9"))
-        with pytest.raises(DBAPIError, match="permission denied"), db.begin_nested():
+        with failing(db, DBAPIError, match="permission denied"):
             db.execute(sa.text("DELETE FROM card_movements"))
 
 
@@ -366,9 +366,9 @@ def test_app_write_cannot_change_the_scenario_catalogue(db: Session) -> None:
     f.startup_flow(db)
 
     with as_role(db, "app_write"):
-        with pytest.raises(DBAPIError, match="permission denied"), db.begin_nested():
+        with failing(db, DBAPIError, match="permission denied"):
             db.execute(sa.text("UPDATE scenario_stages SET default_wip_limit = 9"))
-        with pytest.raises(DBAPIError, match="permission denied"), db.begin_nested():
+        with failing(db, DBAPIError, match="permission denied"):
             db.execute(sa.text("DELETE FROM scenarios"))
 
 
