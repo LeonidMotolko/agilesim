@@ -573,3 +573,4 @@ SELECT s.id, v.code, v.day, v.title, v.description, v.effect, v.amount
 UPDATE alembic_version SET version_num='0004' WHERE alembic_version.version_num = '0003';
 
 COMMIT;
+
