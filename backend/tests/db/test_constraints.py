@@ -113,8 +113,20 @@ def test_join_code_is_unique(db: Session) -> None:
 
 
 def test_session_status_is_restricted(db: Session) -> None:
+    # The ORM refuses the value before it reaches the database (validate_strings=True) ...
     with failing(db, StatementError):
         f.make_session(db, status="archived")
+
+
+def test_session_status_is_checked_by_the_database_itself(db: Session) -> None:
+    # ... so raw SQL proves the CHECK constraint that guards every other client.
+    session = f.make_session(db)
+
+    with failing(db, IntegrityError, match="ck_game_sessions_status_valid"):
+        db.execute(
+            sa.text("UPDATE game_sessions SET status = 'archived' WHERE id = :id"),
+            {"id": session.id},
+        )
 
 
 def test_participant_needs_consent(db: Session) -> None:

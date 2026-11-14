@@ -2,6 +2,7 @@
 
 import uuid
 from decimal import Decimal
+from typing import Any
 
 import pytest
 import sqlalchemy as sa
@@ -120,6 +121,15 @@ def test_a_card_can_enter_the_board_without_a_source_stage(db: Session) -> None:
     db.refresh(card)
 
     assert (card.stage_id, card.stage_state) == (stages["analysis"].id, READY)
+
+
+def test_a_card_already_on_the_board_cannot_enter_it_again(db: Session) -> None:
+    card = f.make_card(db, f.make_team(db), 104, 100)
+    f.move(db, card, "analysis", day=1, state=IN_PROGRESS)
+    f.move(db, card, "done", day=5)
+
+    with failing(db, IntegrityError, match="already on the board"):
+        f.move(db, card, "analysis", day=6, state=IN_PROGRESS, from_stage_id=None, from_state=None)
 
 
 def test_updated_at_is_maintained_by_a_trigger(db: Session) -> None:
@@ -241,6 +251,76 @@ def test_teams_are_ranked_by_money(db: Session) -> None:
         ("Alpha", Decimal(210), 1),
         ("Beta", Decimal(100), 2),
     ]
+
+
+def flow(db: Session, card_id: uuid.UUID) -> tuple[int | None, int | None, int | None]:
+    row = db.execute(
+        sa.text("SELECT pulled_day, done_day, lead_time_days FROM card_flow WHERE card_id = :c"),
+        {"c": card_id},
+    ).one()
+    return (row.pulled_day, row.done_day, row.lead_time_days)
+
+
+def results(db: Session, team_id: uuid.UUID) -> tuple[int, Decimal]:
+    row = db.execute(
+        sa.text("SELECT done_cards, money_earned FROM team_results WHERE team_id = :t"),
+        {"t": team_id},
+    ).one()
+    return (row.done_cards, row.money_earned)
+
+
+def correction(db: Session) -> dict[str, Any]:
+    """Fields of a manual correction by the facilitator (US-06)."""
+    return {
+        "is_manual": True,
+        "comment": "moved by mistake",
+        "actor_facilitator_id": f.make_facilitator(db).id,
+    }
+
+
+def test_a_card_moved_back_out_of_done_earns_nothing_until_it_is_done_again(db: Session) -> None:
+    team = f.make_team(db)
+    card = f.make_card(db, team, 104, 100)
+    f.move(db, card, "analysis", day=1, state=IN_PROGRESS)
+    f.move(db, card, "done", day=3)
+    f.move(db, card, "testing", day=3, state=IN_PROGRESS, **correction(db))
+
+    assert flow(db, card.id) == (1, None, None)
+    assert results(db, team.id) == (0, Decimal(0))
+
+    f.move(db, card, "done", day=6)
+
+    assert flow(db, card.id) == (1, 6, 6)
+    assert results(db, team.id) == (1, Decimal(100))
+
+
+def test_a_card_returned_to_the_backlog_counts_from_its_next_pull(db: Session) -> None:
+    card = f.make_card(db, f.make_team(db), 105, 80)
+    f.move(db, card, "analysis", day=1, state=IN_PROGRESS)
+    f.move(db, card, "backlog", day=1, **correction(db))
+
+    assert flow(db, card.id) == (None, None, None)
+    assert daily_states(db, card.id) == []
+
+    f.play_to_done(db, card, pulled=2, done=4)
+
+    assert flow(db, card.id) == (2, 4, 3)
+
+
+def test_a_card_entering_the_board_directly_is_pulled_on_that_day(db: Session) -> None:
+    session = f.make_session(db, current_day=8)
+    card = f.make_card(db, f.make_team(db, session), 0, 0)
+    f.move(db, card, "development", day=7, state=IN_PROGRESS, from_stage_id=None, from_state=None)
+
+    assert flow(db, card.id) == (7, None, None)
+    assert daily_states(db, card.id) == [
+        (7, "development", "in_progress"),
+        (8, "development", "in_progress"),
+    ]
+
+    f.move(db, card, "done", day=8)
+
+    assert flow(db, card.id) == (7, 8, 2)
 
 
 def daily_states(db: Session, card_id: uuid.UUID) -> list[tuple[int, str, str | None]]:

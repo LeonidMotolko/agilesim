@@ -52,7 +52,15 @@ CREATE FUNCTION apply_card_movement() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.from_stage_id IS NULL THEN
-        -- A card entering the board directly (for example the emergency card).
+        -- A card entering the board directly (for example the emergency card). That can only be
+        -- its first movement. The card is locked first, so a concurrent first movement is visible
+        -- to the check below (each statement takes a fresh snapshot) once its lock is released.
+        PERFORM FROM cards WHERE id = NEW.card_id FOR NO KEY UPDATE;
+        IF EXISTS (SELECT FROM card_movements WHERE card_id = NEW.card_id AND id <> NEW.id) THEN
+            RAISE EXCEPTION 'card % is already on the board: the movement must say where it starts',
+                NEW.card_id
+                USING ERRCODE = 'check_violation';
+        END IF;
         UPDATE cards SET stage_id = NEW.to_stage_id, stage_state = NEW.to_state
          WHERE id = NEW.card_id;
         RETURN NEW;
@@ -86,36 +94,53 @@ SELECT id, display_name, mask_email(email) AS email_masked, is_active, created_a
 
 # Lead Time follows the session's counting convention (default "inclusive": Done day - pull day
 # + 1). In this scenario work starts when a card is pulled, so Cycle Time equals Lead Time.
+# The log may contain corrections (US-06), so the days come from the card's *latest* pull and
+# latest arrival in Done, and only count while the card is still out of the backlog or in Done:
+# a card moved back out of Done earns nothing. A card that enters the board directly (no source
+# stage, for example the emergency card) is pulled on that day.
 CARD_FLOW = """
 CREATE VIEW card_flow AS
 WITH moves AS (
     SELECT m.card_id,
-           min(m.day) FILTER (WHERE fs.kind = 'backlog') AS pulled_day,
-           min(m.day) FILTER (WHERE ts.kind = 'done') AS done_day
+           (array_agg(m.day ORDER BY m.id DESC) FILTER (
+               WHERE (m.from_stage_id IS NULL OR fs.kind = 'backlog') AND ts.kind <> 'backlog'
+           ))[1] AS last_pull_day,
+           (array_agg(m.day ORDER BY m.id DESC) FILTER (
+               WHERE ts.kind = 'done' AND fs.kind IS DISTINCT FROM 'done'
+           ))[1] AS last_done_day
       FROM card_movements m
       LEFT JOIN scenario_stages fs ON fs.id = m.from_stage_id
       JOIN scenario_stages ts ON ts.id = m.to_stage_id
      GROUP BY m.card_id
+),
+flow AS (
+    SELECT c.id AS card_id,
+           c.team_id,
+           c.scenario_card_id,
+           CASE WHEN cs.kind <> 'backlog' THEN mv.last_pull_day END AS pulled_day,
+           CASE WHEN cs.kind = 'done' THEN mv.last_done_day END AS done_day
+      FROM cards c
+      JOIN scenario_stages cs ON cs.id = c.stage_id
+      LEFT JOIN moves mv ON mv.card_id = c.id
 )
-SELECT c.id AS card_id,
-       c.team_id,
+SELECT f.card_id,
+       f.team_id,
        t.session_id,
        sc.number AS card_number,
        sc.title,
        sc.value,
        sc.is_emergency,
-       mv.pulled_day,
-       mv.done_day,
+       f.pulled_day,
+       f.done_day,
        CASE
-           WHEN mv.pulled_day IS NOT NULL AND mv.done_day IS NOT NULL
-           THEN mv.done_day - mv.pulled_day
+           WHEN f.pulled_day IS NOT NULL AND f.done_day IS NOT NULL
+           THEN f.done_day - f.pulled_day
                 + CASE gs.lead_time_convention WHEN 'inclusive' THEN 1 ELSE 0 END
        END AS lead_time_days
-  FROM cards c
-  JOIN teams t ON t.id = c.team_id
+  FROM flow f
+  JOIN teams t ON t.id = f.team_id
   JOIN game_sessions gs ON gs.id = t.session_id
-  JOIN scenario_cards sc ON sc.id = c.scenario_card_id
-  LEFT JOIN moves mv ON mv.card_id = c.id
+  JOIN scenario_cards sc ON sc.id = f.scenario_card_id
 """
 
 # One row per card and day between the pull and Done (or the current day), carrying the last

@@ -68,18 +68,19 @@ which only the SHA-256 hash is stored (`participants.token_hash`).
 * Each game action is one transaction in the application: the log row, the card update (done by
   trigger) and the work squares change commit or roll back together. Isolation is the PostgreSQL
   default (read committed); two concurrent moves of one card cannot both succeed because the
-  `apply_card_movement` trigger updates the card only if it is still where the move says.
+  `apply_card_movement` trigger updates the card only if it is still where the move says (a move
+  without a source stage locks the card and is accepted only as its first movement).
 
 ## Functions, triggers and views (migration 0002)
 
 | Object | What it does |
 | --- | --- |
 | `forbid_modification()` + triggers `*_append_only` | `card_movements`, `dice_rolls` and `point_spends` reject direct UPDATE and DELETE. Cascades (deleting a session) and the anonymising `SET NULL` still work because they arrive from a foreign-key trigger one level deeper (`pg_trigger_depth()`). |
-| `apply_card_movement()` + trigger `card_movements_apply` | After a log row is inserted, moves the card to the logged position; refuses a move whose source position is stale. |
+| `apply_card_movement()` + trigger `card_movements_apply` | After a log row is inserted, moves the card to the logged position; refuses a move whose source position is stale. A row without a source stage (a card entering the board directly, such as the emergency card) is accepted only as the card's first movement. |
 | `set_updated_at()` + triggers `*_set_updated_at` | Maintains `updated_at` on `facilitators`, `game_sessions`, `cards`. |
 | `mask_email(text)` | `anna.k@example.com` becomes `a***@example.com`. |
 | view `facilitators_masked` | Facilitators without the password hash and with a masked e-mail; the only way `app_read` sees accounts. |
-| view `card_flow` | Per card: pull day, Done day, Lead Time under the session's counting convention (default inclusive: Done minus pull plus 1). Cycle Time equals Lead Time in this scenario because work starts at the pull. |
+| view `card_flow` | Per card: pull day, Done day, Lead Time under the session's counting convention (default inclusive: Done minus pull plus 1). Cycle Time equals Lead Time in this scenario because work starts at the pull. Corrections are respected: the days are those of the latest pull (or direct entry) and the latest arrival in Done, and they count only while the card is out of the backlog or in Done, so a card moved back out of Done has no Done day and earns no money. |
 | view `card_daily_state` | One row per card and day from the pull to Done (or the current day), carrying the last logged position forward. This is the layout of the supervisor's logging table. |
 | view `team_results` | Cards done, money earned (only cards in Done), average Lead Time and the rank of the team in its session (window function). |
 

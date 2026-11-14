@@ -61,6 +61,15 @@ jobs:
           test "$(query "SELECT pg_has_role('agilesim_app', 'app_write', 'member')")" = t
           test "$(query "SELECT count(*) FROM scenario_stages")" = 5
 
+      - name: The API process does not hold the schema owner's credentials
+        run: |
+          names="$(docker compose exec -T backend sh -c "tr '\\0' '\\n' < /proc/1/environ | cut -d= -f1")"
+          grep -qx AGILESIM_DATABASE_URL <<<"$names"
+          if grep -qx AGILESIM_MIGRATION_DATABASE_URL <<<"$names"; then
+            echo "::error::the API process inherited AGILESIM_MIGRATION_DATABASE_URL"
+            exit 1
+          fi
+
       - name: Frontend serves the SPA
         run: curl --fail --silent --show-error http://127.0.0.1:8080/ | grep -q '<div id="root">'
 
