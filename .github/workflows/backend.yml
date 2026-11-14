@@ -72,6 +72,9 @@ jobs:
           AGILESIM_MIGRATION_DATABASE_URL=postgresql://offline@localhost/offline \
             uv run alembic -c alembic.ini upgrade head --sql > reports/schema.sql
 
+      - name: Show the exported schema
+        run: cat reports/schema.sql
+
       - name: Upload test and coverage reports
         if: always()
         uses: actions/upload-artifact@v7
