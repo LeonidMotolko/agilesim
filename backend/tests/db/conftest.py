@@ -64,8 +64,14 @@ def failing(
 ) -> Generator[None]:
     """Expect ``error`` from the enclosed statements and roll back only to a savepoint.
 
-    Autoflush is off so that pending objects are flushed *inside* the block, where the failure
-    is caught, and the session stays usable afterwards.
+    Opening a savepoint flushes the session, which would raise outside the block. Objects added
+    before the block are therefore set aside and re-added inside it, so that the flush the test
+    asks for happens within the savepoint and the session stays usable afterwards.
     """
-    with pytest.raises(error, match=match), session.no_autoflush, session.begin_nested():
+    pending = list(session.new)
+    for instance in pending:
+        session.expunge(instance)
+    with pytest.raises(error, match=match), session.begin_nested():
+        for instance in pending:
+            session.add(instance)
         yield
