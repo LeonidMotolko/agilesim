@@ -48,6 +48,19 @@ jobs:
       - name: Backend answers directly
         run: curl --fail --silent --show-error http://127.0.0.1:8000/health
 
+      - name: Backend reaches the migrated database
+        run: |
+          body="$(curl --fail --silent --show-error http://127.0.0.1:8000/health/db)"
+          echo "$body"
+          test "$body" = '{"database":"ok"}'
+
+      - name: The application role is limited and the schema is migrated
+        run: |
+          query() { docker compose exec -T db psql -U agilesim -d agilesim -At -c "$1"; }
+          test "$(query "SELECT rolsuper FROM pg_roles WHERE rolname = 'agilesim_app'")" = f
+          test "$(query "SELECT pg_has_role('agilesim_app', 'app_write', 'member')")" = t
+          test "$(query "SELECT count(*) FROM scenario_stages")" = 5
+
       - name: Frontend serves the SPA
         run: curl --fail --silent --show-error http://127.0.0.1:8080/ | grep -q '<div id="root">'
 

@@ -11,6 +11,10 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    # Runtime connection: a limited login role (member of app_write), never a superuser.
+    database_url: str | None = None
+    # Schema owner used only by migrations; falls back to ``database_url`` when unset.
+    migration_database_url: str | None = None
 
 
 @lru_cache

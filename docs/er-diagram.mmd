@@ -1,0 +1,139 @@
+erDiagram
+    scenarios ||--o{ scenario_stages : "has board columns"
+    scenarios ||--o{ scenario_cards : "has backlog"
+    scenarios ||--o{ scenario_events : "has event cards"
+    scenario_cards ||--o{ scenario_card_work : "needs work"
+    scenario_stages ||--o{ scenario_card_work : "on stage"
+    facilitators ||--o{ game_sessions : "runs"
+    scenarios ||--o{ game_sessions : "plays"
+    game_sessions ||--o{ session_stage_limits : "WIP limits"
+    scenario_stages ||--o{ session_stage_limits : "limit of"
+    game_sessions ||--o{ teams : "has"
+    game_sessions ||--o{ participants : "has"
+    teams |o--o{ participants : "joined by"
+    game_sessions ||--o{ game_events : "events"
+    scenario_events |o--o{ game_events : "origin"
+    game_sessions ||--o{ ai_drafts : "AI drafts"
+    participants ||--o{ survey_responses : "answers"
+    teams ||--o{ cards : "owns"
+    scenario_cards ||--o{ cards : "copy of"
+    scenario_stages ||--o{ cards : "current column"
+    cards ||--o{ card_work : "squares left"
+    cards ||--o{ card_movements : "moves (log)"
+    cards ||--o{ point_spends : "points (log)"
+    teams ||--o{ dice_rolls : "rolls (log)"
+    participants |o--o{ card_movements : "actor"
+    facilitators |o--o{ card_movements : "manual actor"
+
+    facilitators {
+        uuid id PK
+        text email UK
+        text password_hash
+    }
+    scenarios {
+        uuid id PK
+        text code
+        smallint version
+        text kind
+    }
+    scenario_stages {
+        uuid id PK
+        uuid scenario_id FK
+        text code
+        smallint position
+        smallint default_wip_limit
+    }
+    scenario_cards {
+        uuid id PK
+        uuid scenario_id FK
+        smallint number
+        numeric value
+    }
+    scenario_card_work {
+        uuid scenario_card_id PK
+        uuid stage_id PK
+        smallint squares
+    }
+    scenario_events {
+        uuid id PK
+        uuid scenario_id FK
+        smallint day
+        text effect
+    }
+    game_sessions {
+        uuid id PK
+        uuid facilitator_id FK
+        uuid scenario_id FK
+        text join_code UK
+        text status
+        smallint current_day
+    }
+    session_stage_limits {
+        uuid session_id PK
+        uuid stage_id PK
+        smallint wip_limit
+    }
+    teams {
+        uuid id PK
+        uuid session_id FK
+        text name
+    }
+    participants {
+        uuid id PK
+        uuid session_id FK
+        uuid team_id FK
+        text display_name
+        timestamptz consent_given_at
+    }
+    cards {
+        uuid id PK
+        uuid team_id FK
+        uuid scenario_card_id FK
+        uuid stage_id FK
+        text stage_state
+        boolean is_blocked
+    }
+    card_work {
+        uuid card_id PK
+        uuid stage_id PK
+        smallint squares_left
+    }
+    game_events {
+        uuid id PK
+        uuid session_id FK
+        uuid scenario_event_id FK
+        text status
+    }
+    survey_responses {
+        uuid id PK
+        uuid participant_id FK
+        text phase
+        smallint confidence
+    }
+    ai_drafts {
+        uuid id PK
+        uuid session_id FK
+        text kind
+        text status
+    }
+    card_movements {
+        bigint id PK
+        uuid card_id FK
+        smallint day
+        uuid from_stage_id FK
+        uuid to_stage_id FK
+        uuid request_id
+    }
+    dice_rolls {
+        bigint id PK
+        uuid team_id FK
+        uuid stage_id FK
+        smallint day
+        smallint value
+    }
+    point_spends {
+        bigint id PK
+        uuid card_id FK
+        smallint points_spent
+        smallint squares_crossed
+    }
