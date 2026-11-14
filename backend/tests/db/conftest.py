@@ -71,7 +71,7 @@ def failing(
     pending = list(session.new)
     for instance in pending:
         session.expunge(instance)
-    with pytest.raises(error, match=match), session.begin_nested():
+    with pytest.raises(error, match=match), session.begin_nested():  # noqa: PT012
         for instance in pending:
             session.add(instance)
         yield
