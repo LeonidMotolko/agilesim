@@ -572,5 +572,56 @@ SELECT s.id, v.code, v.day, v.title, v.description, v.effect, v.amount
 
 UPDATE alembic_version SET version_num='0004' WHERE alembic_version.version_num = '0003';
 
+-- Running upgrade 0004 -> 0005
+
+CREATE FUNCTION mask_name(full_name text) RETURNS text
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+    SELECT left(btrim(full_name), 1) || '***'
+$$;
+
+DROP VIEW facilitators_masked;
+
+CREATE VIEW facilitators_masked AS
+SELECT id,
+       mask_name(display_name) AS display_name_masked,
+       mask_email(email) AS email_masked,
+       is_active,
+       created_at
+  FROM facilitators;
+
+CREATE VIEW participants_masked AS
+SELECT id,
+       session_id,
+       team_id,
+       mask_name(display_name) AS display_name_masked,
+       role,
+       consent_given_at,
+       joined_at
+  FROM participants;
+
+GRANT SELECT ON facilitators_masked, participants_masked TO app_read;
+
+GRANT ALL PRIVILEGES ON facilitators_masked, participants_masked TO app_admin;
+
+REVOKE SELECT (display_name) ON facilitators FROM app_read;
+
+REVOKE SELECT ON participants FROM app_read;
+
+GRANT SELECT (id, session_id, team_id, role, consent_given_at, joined_at) ON participants TO app_read;
+
+GRANT SELECT ON participants TO app_write;
+
+CREATE INDEX ix_card_movements_actor_participant_id ON card_movements (actor_participant_id);
+
+CREATE INDEX ix_dice_rolls_rolled_by ON dice_rolls (rolled_by);
+
+CREATE INDEX ix_point_spends_actor_participant_id ON point_spends (actor_participant_id);
+
+ALTER TABLE facilitators DROP CONSTRAINT ck_facilitators_password_hashed;
+
+ALTER TABLE facilitators ADD CONSTRAINT ck_facilitators_password_hashed CHECK (password_hash ~ '^(\$argon2(id|i|d)\$v=[0-9]+\$m=[0-9]+,t=[0-9]+,p=[0-9]+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+|\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53})$');
+
+UPDATE alembic_version SET version_num='0005' WHERE alembic_version.version_num = '0004';
+
 COMMIT;
 

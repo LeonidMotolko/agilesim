@@ -37,8 +37,12 @@ from agilesim.db.enums import (
     SurveyPhase,
 )
 
-# Password hashes must look like Argon2 or bcrypt output; plain text is rejected by the database.
-HASH_FORMAT_REGEX = r"^\$(argon2(id|i|d)|2[aby])\$"
+# Password hashes must be Argon2 (PHC string) or bcrypt output; plain text, MD5 and SHA-1 are
+# rejected by the database (migration 0005).
+HASH_FORMAT_REGEX = (
+    r"^(\$argon2(id|i|d)\$v=[0-9]+\$m=[0-9]+,t=[0-9]+,p=[0-9]+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+"
+    r"|\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53})$"
+)
 
 
 def _updated_at() -> Mapped[datetime]:
@@ -467,6 +471,7 @@ class CardMovement(Base):
         ),
         sa.Index("ix_card_movements_card_id_day", "card_id", "day"),
         sa.Index("ix_card_movements_team_id_day", "team_id", "day"),
+        sa.Index("ix_card_movements_actor_participant_id", "actor_participant_id"),
     )
 
     id: Mapped[int] = bigint_pk()
@@ -502,6 +507,7 @@ class DiceRoll(Base):
         sa.UniqueConstraint("team_id", "request_id", name="uq_dice_rolls_request"),
         sa.CheckConstraint("value BETWEEN 1 AND 6", name="value_range"),
         sa.CheckConstraint("day >= 1", name="day_positive"),
+        sa.Index("ix_dice_rolls_rolled_by", "rolled_by"),
     )
 
     id: Mapped[int] = bigint_pk()
@@ -539,6 +545,7 @@ class PointSpend(Base):
         ),
         sa.Index("ix_point_spends_card_id", "card_id"),
         sa.Index("ix_point_spends_team_id_day", "team_id", "day"),
+        sa.Index("ix_point_spends_actor_participant_id", "actor_participant_id"),
     )
 
     id: Mapped[int] = bigint_pk()

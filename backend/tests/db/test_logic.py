@@ -60,6 +60,22 @@ def test_deleting_a_session_removes_its_logs(db: Session) -> None:
     assert db.scalar(sa.select(sa.func.count()).select_from(CardMovement)) == 0
 
 
+def test_deleting_a_session_removes_its_teams_and_participants(db: Session) -> None:
+    session = f.make_session(db)
+    team = f.make_team(db, session)
+    participant = f.make_participant(db, team)
+    card = f.make_card(db, team, 104, 100)
+    f.move(db, card, "analysis", day=1, state=READY, actor_participant_id=participant.id)
+
+    db.execute(sa.delete(GameSession).where(GameSession.id == session.id))
+
+    remaining = [
+        db.scalar(sa.select(sa.func.count()).select_from(model))
+        for model in (Team, Participant, CardMovement)
+    ]
+    assert remaining == [0, 0, 0]
+
+
 def test_removing_a_participant_anonymises_the_log(db: Session) -> None:
     team = f.make_team(db)
     participant = f.make_participant(db, team)
@@ -140,12 +156,27 @@ def test_mask_email_keeps_the_first_letter_and_the_domain(db: Session) -> None:
     assert db.scalar(sa.text("SELECT mask_email(NULL)")) is None
 
 
-def test_masked_view_hides_the_address(db: Session) -> None:
+def test_mask_name_keeps_only_the_first_letter(db: Session) -> None:
+    assert db.scalar(sa.text("SELECT mask_name(' Anna Kowalska')")) == "A***"
+    assert db.scalar(sa.text("SELECT mask_name(NULL)")) is None
+
+
+def test_masked_view_hides_the_address_and_the_name(db: Session) -> None:
     f.make_facilitator(db, "anna.k@example.com")
 
-    rows = db.execute(sa.text("SELECT email_masked FROM facilitators_masked")).scalars().all()
+    rows = db.execute(
+        sa.text("SELECT display_name_masked, email_masked FROM facilitators_masked")
+    ).all()
 
-    assert rows == ["a***@example.com"]
+    assert [tuple(row) for row in rows] == [("K***", "a***@example.com")]
+
+
+def test_participants_masked_view_hides_the_name(db: Session) -> None:
+    f.make_participant(db, f.make_team(db), "Anna")
+
+    names = db.scalars(sa.text("SELECT display_name_masked FROM participants_masked")).all()
+
+    assert names == ["A***"]
 
 
 # ------------------------------------------------------------------ metrics views
@@ -304,31 +335,58 @@ def test_every_table_and_view_is_readable_by_app_read(db: Session) -> None:
     names = db.scalars(
         sa.text(
             "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = 'public' "
-            "AND table_name NOT IN ('alembic_version', 'facilitators')"
+            "WHERE table_schema = 'public' AND table_name <> 'alembic_version'"
         )
     ).all()
 
-    assert len(names) >= 21  # 17 tables without facilitators + 4 views
+    assert len(names) >= 23  # 18 tables + 5 views
     for name in names:
+        # Column-level grants count: facilitators and participants are readable without names.
         granted = db.scalar(
-            sa.text("SELECT has_table_privilege('app_read', :n, 'SELECT')"), {"n": f"public.{name}"}
+            sa.text("SELECT has_any_column_privilege('app_read', :n, 'SELECT')"),
+            {"n": f"public.{name}"},
         )
         assert granted, f"app_read cannot read {name}: add the grant to a migration"
 
 
-def test_app_read_sees_no_personal_columns_of_facilitators(db: Session) -> None:
-    def can_read(column: str) -> bool:
-        return bool(
-            db.scalar(
-                sa.text("SELECT has_column_privilege('app_read', 'facilitators', :c, 'SELECT')"),
-                {"c": column},
-            )
+def can_read(db: Session, role: str, table: str, column: str) -> bool:
+    return bool(
+        db.scalar(
+            sa.text("SELECT has_column_privilege(:r, :t, :c, 'SELECT')"),
+            {"r": role, "t": table, "c": column},
         )
+    )
 
-    assert can_read("display_name")
-    assert not can_read("email")
-    assert not can_read("password_hash")
+
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [
+        ("facilitators", "email"),
+        ("facilitators", "password_hash"),
+        ("facilitators", "display_name"),
+        ("participants", "display_name"),
+        ("participants", "token_hash"),
+    ],
+)
+def test_app_read_sees_no_personal_columns(db: Session, table: str, column: str) -> None:
+    assert not can_read(db, "app_read", table, column)
+    assert can_read(db, "app_read", table, "id")
+    assert can_read(db, "app_write", table, column)
+
+
+def test_app_read_reads_participants_without_names(db: Session) -> None:
+    f.make_participant(db, f.make_team(db))
+
+    with as_role(db, "app_read"):
+        with failing(db, DBAPIError, match="permission denied"):
+            db.execute(sa.text("SELECT display_name FROM participants"))
+        with failing(db, DBAPIError, match="permission denied"):
+            db.execute(sa.text("SELECT token_hash FROM participants"))
+        roles = db.scalars(sa.text("SELECT role FROM participants")).all()
+        masked = db.scalars(sa.text("SELECT display_name_masked FROM participants_masked")).all()
+
+    assert roles == ["player"]
+    assert masked == ["A***"]
 
 
 def test_app_read_cannot_select_the_email_column(db: Session) -> None:
