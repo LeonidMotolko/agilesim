@@ -31,9 +31,24 @@ the scenario card. The work still open per stage is one row per stage in `card_w
 `scenario_card_work.scenario_id` repeats the scenario on purpose: two composite foreign keys use it
 to guarantee that a card and a stage belong to the same scenario without a trigger.
 
-**Where the schema is deliberately not minimal.**
-`cards.stage_id/stage_state` is the *current* position and could be derived from the log; it is
-kept (and synchronised by a trigger) because the board reads it on every request.
+**Where the schema is deliberately not minimal.** Each of these columns depends on another
+non-key column; each is kept for a stated reason and cannot drift from its source:
+
+* `cards.stage_id/stage_state` is the *current* position and could be derived from the log; it is
+  kept (and synchronised by a trigger) because the board reads it on every request.
+* `card_movements.team_id` and `point_spends.team_id` follow from `card_id`; they are the second
+  half of the composite foreign key to `cards (id, team_id)` (so they cannot disagree with the
+  card) and scope the idempotency key `(team_id, request_id)`.
+* `participants.session_id` follows from `team_id` when a team is chosen; it is needed because
+  `team_id` is optional (a player waits in the lobby without a team), and the composite foreign
+  key to `teams (id, session_id)` keeps both consistent.
+* `point_spends.squares_crossed` follows from `points_spent` and whether the two stages are equal;
+  it records the outcome the players saw, and `ck_point_spends_half_value_rule` rejects any value
+  that does not match the rule.
+* `game_events.day/title/description` start as a copy of the scenario event for
+  `source = template`; the table also holds AI and manual events that have no catalogue row, so
+  the text of every event of a session is in one place.
+
 `card_movements` stores stage ids of the moment, which are immutable because a scenario version
 is never edited after it is used (a change is a new `version` row).
 
@@ -46,17 +61,27 @@ constraints), not native PostgreSQL enums, so a new value is a one-line migratio
 **Money** is `numeric(10,2)`; all points in time are `timestamptz`; days of the game are
 `smallint` (the game has 8 days).
 
-**Passwords** are never stored in plain text. `facilitators.password_hash` must match the shape of
-an Argon2 or bcrypt hash (`ck_facilitators_password_hashed`), so plain text, MD5 and SHA-1 are
-rejected by the database itself. Participants have no password: they hold a random join token of
-which only the SHA-256 hash is stored (`participants.token_hash`).
+**Passwords** are never stored in plain text. `facilitators.password_hash` must be a complete
+Argon2 hash in the PHC string format (`$argon2id$v=19$m=...,t=...,p=...$salt$hash`) or a complete
+bcrypt hash (`$2b$12$` and 53 characters) (`ck_facilitators_password_hashed`, migration 0005), so
+plain text, MD5 and SHA-1 are rejected by the database itself.
+
+**Join tokens.** Participants have no password: they hold a random join token of which only the
+SHA-256 hash is stored (`participants.token_hash`, lower-case hex, unique). A fast hash is enough
+here because the token is not chosen by a person: the API must generate it with a CSPRNG and at
+least 128 bits of entropy (for example `secrets.token_urlsafe(32)`), so guessing it from the hash
+is infeasible, while a deterministic hash lets the API find the participant by an index lookup.
+Slow password hashes (Argon2, bcrypt) are for low-entropy secrets that people choose.
 
 ## Integrity and transactions
 
-* Every table has a primary key; every relationship is a foreign key with an explicit
-  `ON DELETE` rule: `CASCADE` for owned data (a session owns its teams, cards, logs), `RESTRICT`
-  for catalogue data and for the facilitator of a session, `SET NULL` for optional actors, so removing a
-  participant anonymises the log instead of deleting history.
+* Every table has a primary key; every relationship is a foreign key with an `ON DELETE` rule:
+  `CASCADE` for owned data (a session owns its teams, cards, logs), `RESTRICT` for catalogue data
+  and for the facilitator of a session, `SET NULL` for optional actors, so removing a participant
+  anonymises the log instead of deleting history. The one foreign key with the default rule
+  (`NO ACTION`) is `participants (team_id, session_id)`: a team that still has members cannot be
+  deleted on its own, while deleting the whole session removes teams and participants together
+  (the check runs at the end of the statement).
 * Business rules that fit in one row are CHECK constraints: dice value 1 to 6, join code format
   (`^[A-Z0-9]{6}$`), manual log rows need a comment and a facilitator, an applied event needs its
   timestamps, help points count half rounded down (`ck_point_spends_half_value_rule`), and more.
@@ -65,13 +90,19 @@ which only the SHA-256 hash is stored (`participants.token_hash`).
   per session; one answer per participant and survey phase.
 * Composite foreign keys keep related rows inside one team or session: a log row's card must
   belong to the log row's team; a participant's team must belong to the participant's session.
-* Each game action is one transaction in the application: the log row, the card update (done by
-  trigger) and the work squares change commit or roll back together. Isolation is the PostgreSQL
-  default (read committed); two concurrent moves of one card cannot both succeed because the
-  `apply_card_movement` trigger updates the card only if it is still where the move says (a move
-  without a source stage locks the card and is accepted only as its first movement).
+* Each game action is to be one transaction in the API (the game endpoints are not written yet):
+  the log row, the card update (done by trigger) and the work squares change commit or roll back
+  together. Isolation is the PostgreSQL default (read committed); two concurrent moves of one card
+  cannot both succeed because the `apply_card_movement` trigger updates the card only if it is
+  still where the move says (a move without a source stage locks the card and is accepted only as
+  its first movement).
+* Known limit: stage references in the game tables (`cards.stage_id`, `card_work.stage_id`,
+  `session_stage_limits.stage_id`, the stage columns of the logs) and `cards.scenario_card_id`
+  point at existing catalogue rows, but the database does not check that they belong to the
+  *session's* scenario (only `scenario_card_work` checks this, with composite keys). The API
+  takes them from the session's scenario; today the catalogue holds a single scenario.
 
-## Functions, triggers and views (migration 0002)
+## Functions, triggers and views (migrations 0002 and 0005)
 
 | Object | What it does |
 | --- | --- |
@@ -79,7 +110,9 @@ which only the SHA-256 hash is stored (`participants.token_hash`).
 | `apply_card_movement()` + trigger `card_movements_apply` | After a log row is inserted, moves the card to the logged position; refuses a move whose source position is stale. A row without a source stage (a card entering the board directly, such as the emergency card) is accepted only as the card's first movement. |
 | `set_updated_at()` + triggers `*_set_updated_at` | Maintains `updated_at` on `facilitators`, `game_sessions`, `cards`. |
 | `mask_email(text)` | `anna.k@example.com` becomes `a***@example.com`. |
-| view `facilitators_masked` | Facilitators without the password hash and with a masked e-mail; the only way `app_read` sees accounts. |
+| `mask_name(text)` | `Anna Kowalska` becomes `A***` (0005). |
+| view `facilitators_masked` | Facilitators without the password hash, with a masked name and e-mail (`display_name_masked`, `email_masked`); the only way `app_read` sees who an account belongs to. |
+| view `participants_masked` | Participants without the join-token hash and with a masked name (`display_name_masked`) (0005). |
 | view `card_flow` | Per card: pull day, Done day, Lead Time under the session's counting convention (default inclusive: Done minus pull plus 1). Cycle Time equals Lead Time in this scenario because work starts at the pull. Corrections are respected: the days are those of the latest pull (or direct entry) and the latest arrival in Done, and they count only while the card is out of the backlog or in Done, so a card moved back out of Done has no Done day and earns no money. |
 | view `card_daily_state` | One row per card and day from the pull to Done (or the current day), carrying the last logged position forward. This is the layout of the supervisor's logging table. |
 | view `team_results` | Cards done, money earned (only cards in Done), average Lead Time and the rank of the team in its session (window function). |
@@ -88,25 +121,27 @@ which only the SHA-256 hash is stored (`participants.token_hash`).
 
 | Role | Login | Rights |
 | --- | --- | --- |
-| `app_read` | no | SELECT on all tables and views except the personal columns of `facilitators` (`email`, `password_hash`); sees accounts through `facilitators_masked`. |
-| `app_write` | no | Inherits `app_read`. INSERT/UPDATE/DELETE on game state; INSERT only on the three logs (the triggers are a second lock); SELECT/INSERT/UPDATE on `facilitators`; no write access to the scenario catalogue. |
-| `app_admin` | no | All privileges on the schema's tables, plus CREATE in the schema: catalogue changes and maintenance. |
+| `app_read` | no | SELECT on all tables and views, except the personal columns: `facilitators.email`, `facilitators.password_hash`, `facilitators.display_name`, `participants.display_name`, `participants.token_hash` (column-level grants). Sees names and e-mails only masked, through `facilitators_masked` and `participants_masked`. |
+| `app_write` | no | Inherits `app_read`. INSERT/UPDATE/DELETE on game state; INSERT only on the three logs (the triggers are a second lock); SELECT/INSERT/UPDATE on `facilitators` and SELECT on `participants` (the API shows names, checks password hashes and join tokens); no write access to the scenario catalogue. |
+| `app_admin` | no | All privileges on the schema's tables and views, plus CREATE in the schema: catalogue changes and maintenance. |
 | `agilesim_app` | yes | The role the API connects with (`AGILESIM_DATABASE_URL`). Member of `app_write`. Not a superuser, owns nothing. Created by `db/init/10-app-role.sh`. |
-| schema owner (`POSTGRES_USER`) | yes | Runs the migrations only (`AGILESIM_MIGRATION_DATABASE_URL`). |
+| migration role (`POSTGRES_USER`) | yes | Runs the migrations only (`AGILESIM_MIGRATION_DATABASE_URL`) and owns the objects they create. In the Docker setup this is the bootstrap superuser of the official PostgreSQL image; the API never uses it. |
 
-The application never runs under the superuser. New tables get **no** automatic grants: add the
-grant in the migration that creates the table. The test `test_every_table_and_view_is_readable_by_app_read`
-fails when a table was forgotten.
+The application never runs under the superuser. No table or view is granted to `PUBLIC` (it keeps
+only the PostgreSQL 17 defaults: USAGE, not CREATE, on schema `public`, and EXECUTE on functions).
+New tables get **no** automatic grants: add the grant in the migration that creates the table.
+The test `test_every_table_and_view_is_readable_by_app_read` fails when a table was forgotten.
 
 Game roles are a different layer: a *facilitator* owns sessions (`game_sessions.facilitator_id`) and
 may act on all of its teams; a *participant* is bound to one team of one session
-(`participants.team_id`) and acts only on that team. The API enforces that, using the database
-keys above.
+(`participants.team_id`) and acts only on that team. The API is to enforce that, using the
+database keys above.
 
 ## Indexes (and why)
 
 Primary keys and UNIQUE constraints already create indexes (join code, team name per session,
-request ids, the roll rule). Additional indexes exist only for queries the game runs constantly:
+request ids, the roll rule). Additional indexes exist only for queries the game runs constantly
+and for removing a participant:
 
 | Index | Query it serves |
 | --- | --- |
@@ -120,6 +155,11 @@ request ids, the roll rule). Additional indexes exist only for queries the game 
 | `ix_game_events_session_id_day` | The event of the current day |
 | `ix_scenario_events_scenario_id_day` | Event cards of a scenario by day |
 | `ix_ai_drafts_session_id_kind` | Pending drafts of a session |
+| `ix_card_movements_actor_participant_id`, `ix_dice_rolls_rolled_by`, `ix_point_spends_actor_participant_id` | Removing a participant: the `SET NULL` of the three logs finds the rows by index instead of scanning each log (0005) |
+
+Foreign keys left without an index of their own reference rows that are never deleted in normal
+operation (stages of a used scenario version, facilitators: the API has no DELETE on accounts) or
+are already covered by the leading column of a primary key, UNIQUE constraint or index above.
 
 ## Versioning and deployment
 
@@ -132,6 +172,7 @@ hand. Each migration has `upgrade()` and `downgrade()`, and the tests run both.
 | `0002` | Functions, triggers, views |
 | `0003` | Roles and grants |
 | `0004` | Reference data: Startup Flow scenario, its five stages and its event cards |
+| `0005` | `mask_name`, `participants_masked`, masked names for `app_read`; indexes on the participant columns of the logs; full Argon2/bcrypt format check |
 
 ```bash
 cd backend
@@ -148,11 +189,14 @@ the models and the migrations cannot drift apart.
 
 * Reference data (`0004`): the scenario, the stages Backlog, Analysis, Development, Testing, Done
   (WIP defaults 2/3/2) and the five event cards of days 2, 3, 4, 6, 7. The 18 backlog cards
-  belong to the course materials and are loaded as data, not as a migration.
+  belong to the course materials and are not in the repository yet; they will be loaded as data,
+  not as a migration. Tests create the cards they need.
 * Tests build their own rows (`backend/tests/db/factories.py`) inside a transaction that is rolled
   back. They cover the reference set of the analysis (cards 104, 105, 115, 102: Lead Time 5, 3, 8, 2,
-  money 330), unfinished cards, cards never pulled, two teams ranked by money, and every constraint
-  with a valid and an invalid row.
+  money 330), unfinished cards, cards never pulled, two teams ranked by money, deleting a session
+  with players and logs, and an invalid row for every CHECK constraint
+  (`test_every_check_constraint_has_a_test` fails when a new one has no test) and for the UNIQUE
+  rules of the game.
 
 ## Data dictionary
 
@@ -190,7 +234,7 @@ A ticket of the scenario backlog.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | uuid | PK |
-| `scenario_id` | uuid | FK `scenarios`, cascade; UK with `number` |
+| `scenario_id` | uuid | FK `scenarios`, cascade; UK with `number` and with `id` |
 | `number` | smallint | NN, card id shown to players (for example 104), `>= 0` |
 | `title` | varchar(200) | NN |
 | `value` | numeric(10,2) | NN, business value in dollars, `>= 0` |
@@ -212,7 +256,7 @@ An event card of a scenario.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | uuid | PK |
-| `scenario_id` | uuid | FK `scenarios`, cascade; UK with `code` |
+| `scenario_id` | uuid | FK `scenarios`, cascade; UK with `code` and with `id` |
 | `code` | varchar(40) | NN, for example `marketing_push` |
 | `day` | smallint | NN, `>= 1` |
 | `title` | varchar(120) | NN |
@@ -227,8 +271,8 @@ Accounts of facilitators (Product Owners).
 | --- | --- | --- |
 | `id` | uuid | PK |
 | `email` | varchar(254) | NN, UK, lower case, contains `@`; personal data (masked for `app_read`) |
-| `display_name` | varchar(80) | NN |
-| `password_hash` | varchar(255) | NN, must look like an Argon2 or bcrypt hash; hidden from `app_read` |
+| `display_name` | varchar(80) | NN; personal data (masked for `app_read`) |
+| `password_hash` | varchar(255) | NN, a complete Argon2 (PHC) or bcrypt hash; hidden from `app_read` |
 | `is_active` | boolean | NN, default true |
 | `created_at` | timestamptz | NN, default now |
 | `updated_at` | timestamptz | NN, set by trigger |
@@ -274,10 +318,10 @@ A player without an account.
 | --- | --- | --- |
 | `id` | uuid | PK |
 | `session_id` | uuid | FK `game_sessions`, cascade; UK with `display_name` |
-| `team_id` | uuid | Optional; composite FK to `teams (id, session_id)`, so the team is in the same session; indexed |
-| `display_name` | varchar(60) | NN, not blank; the only personal data |
+| `team_id` | uuid | Optional; composite FK to `teams (id, session_id)` (no action: a team with members cannot be deleted on its own), so the team is in the same session; indexed |
+| `display_name` | varchar(60) | NN, not blank; the only personal data (masked for `app_read`) |
 | `role` | varchar(12) | NN, default `player`; or `scrum_master` |
-| `token_hash` | varchar(64) | NN, UK, SHA-256 hex of the join token |
+| `token_hash` | varchar(64) | NN, UK, SHA-256 hex of the join token; hidden from `app_read` |
 | `consent_given_at` | timestamptz | NN, moment of consent to take part |
 | `joined_at` | timestamptz | NN, default now |
 
@@ -290,7 +334,7 @@ A team's copy of a scenario card and its current position.
 | `team_id` | uuid | FK `teams`, cascade; UK with `scenario_card_id` |
 | `scenario_card_id` | uuid | FK `scenario_cards`, restrict |
 | `stage_id` | uuid | FK `scenario_stages`, restrict; current column |
-| `stage_state` | varchar(11) | `in_progress` or `ready`; null in Backlog and Done |
+| `stage_state` | varchar(11) | `in_progress` or `ready`; null in Backlog and Done (set by the application, not checked) |
 | `is_blocked` | boolean | NN, default false |
 | `updated_at` | timestamptz | NN, set by trigger |
 
@@ -355,7 +399,7 @@ Text drafted by the AI assistant; shown to players only after approval.
 | `from_state` | varchar(11) | `in_progress` or `ready` |
 | `to_stage_id` | uuid | NN, FK `scenario_stages`, restrict |
 | `to_state` | varchar(11) | `in_progress` or `ready` |
-| `actor_participant_id` | uuid | FK `participants`, set null |
+| `actor_participant_id` | uuid | FK `participants`, set null; indexed |
 | `actor_facilitator_id` | uuid | FK `facilitators`, set null; at most one actor |
 | `request_id` | uuid | NN, idempotency key of the API request |
 | `is_manual` | boolean | NN, default false; a manual row needs a comment and a facilitator |
@@ -370,7 +414,7 @@ Text drafted by the AI assistant; shown to players only after approval.
 | `stage_id` | uuid | NN, FK `scenario_stages`, restrict |
 | `day` | smallint | NN, `>= 1` |
 | `value` | smallint | NN, 1 to 6 |
-| `rolled_by` | uuid | FK `participants`, set null |
+| `rolled_by` | uuid | FK `participants`, set null; indexed |
 | `request_id` | uuid | NN |
 | `occurred_at` | timestamptz | NN, default now |
 
@@ -385,6 +429,6 @@ Text drafted by the AI assistant; shown to players only after approval.
 | `target_stage_id` | uuid | NN, FK `scenario_stages`, restrict; stage of the card |
 | `points_spent` | smallint | NN, `>= 1` |
 | `squares_crossed` | smallint | NN; equals the points for the same stage, half rounded down for help |
-| `actor_participant_id` | uuid | FK `participants`, set null |
+| `actor_participant_id` | uuid | FK `participants`, set null; indexed |
 | `request_id` | uuid | NN |
 | `occurred_at` | timestamptz | NN, default now |

@@ -3,10 +3,8 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # Stable constraint names make Alembic migrations deterministic and reviewable.
@@ -24,7 +22,6 @@ class Base(DeclarativeBase):
     type_annotation_map = {  # noqa: RUF012 - SQLAlchemy declares this as a class attribute
         uuid.UUID: sa.Uuid(),
         datetime: sa.DateTime(timezone=True),
-        dict[str, Any]: JSONB(),
     }
 
 
