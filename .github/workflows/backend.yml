@@ -72,8 +72,12 @@ jobs:
           AGILESIM_MIGRATION_DATABASE_URL=postgresql://offline@localhost/offline \
             uv run alembic -c alembic.ini upgrade head --sql > reports/schema.sql
 
-      - name: Show the exported schema
-        run: cat reports/schema.sql
+      - name: docs/schema.sql is up to date
+        run: |
+          diff -u ../docs/schema.sql reports/schema.sql || {
+            echo "::error::docs/schema.sql is stale. Regenerate it: cd backend && AGILESIM_MIGRATION_DATABASE_URL=postgresql://offline@localhost/offline uv run alembic -c alembic.ini upgrade head --sql > ../docs/schema.sql"
+            exit 1
+          }
 
       - name: Upload test and coverage reports
         if: always()
