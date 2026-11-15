@@ -137,3 +137,13 @@ erDiagram
         smallint points_spent
         smallint squares_crossed
     }
+
+    %% Colour = block of the schema (see docs/database.md)
+    classDef catalogue fill:#dbeafe,stroke:#1d4ed8,color:#0f172a
+    classDef accounts fill:#dcfce7,stroke:#15803d,color:#0f172a
+    classDef state fill:#fef3c7,stroke:#b45309,color:#0f172a
+    classDef logs fill:#fee2e2,stroke:#b91c1c,color:#0f172a
+    class scenarios,scenario_stages,scenario_cards,scenario_card_work,scenario_events catalogue
+    class facilitators,game_sessions,session_stage_limits,teams,participants accounts
+    class cards,card_work,game_events,survey_responses,ai_drafts state
+    class card_movements,dice_rolls,point_spends logs

@@ -10,6 +10,7 @@ Web platform for Agile simulations (Startup Flow, LegoScrum) - diploma project.
 | `frontend/` | React + TypeScript single-page app (Vite, pnpm) |
 | `docker-compose.yml` | The whole stack: PostgreSQL, backend, frontend |
 | `db/init/` | PostgreSQL first-start script: creates the limited login role of the API |
+| `db/demo/` | Demo data: a played session with two teams ([how to load it](docs/database.md#test-data)) |
 | `docs/` | [Database documentation](docs/database.md): ER diagram, data dictionary, roles, indexes |
 | `.github/workflows/` | CI: one workflow per component plus a Compose smoke test |
 
