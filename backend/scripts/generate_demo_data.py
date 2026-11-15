@@ -443,7 +443,7 @@ def build() -> str:
     emit("")
 
     joined = START - timedelta(minutes=10)
-    participants = [
+    participants: list[tuple[str, str, str | None, str, str]] = [
         (
             uid("participant", team.name, name),
             played,
