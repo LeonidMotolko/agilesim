@@ -3,9 +3,9 @@ name: backend
 on:
   push:
     branches: [main, dev]
-    paths: ["backend/**", ".github/workflows/backend.yml"]
+    paths: ["backend/**", "db/demo/**", ".github/workflows/backend.yml"]
   pull_request:
-    paths: ["backend/**", ".github/workflows/backend.yml"]
+    paths: ["backend/**", "db/demo/**", ".github/workflows/backend.yml"]
   workflow_dispatch:
 
 permissions:
@@ -76,6 +76,13 @@ jobs:
         run: |
           diff -u ../docs/schema.sql reports/schema.sql || {
             echo "::error::docs/schema.sql is stale. Regenerate it: cd backend && AGILESIM_MIGRATION_DATABASE_URL=postgresql://offline@localhost/offline uv run alembic -c alembic.ini upgrade head --sql > ../docs/schema.sql"
+            exit 1
+          }
+
+      - name: db/demo/demo_data.sql is up to date
+        run: |
+          uv run python scripts/generate_demo_data.py | diff -u ../db/demo/demo_data.sql - || {
+            echo "::error::db/demo/demo_data.sql is stale. Regenerate it: python backend/scripts/generate_demo_data.py > db/demo/demo_data.sql"
             exit 1
           }
 
