@@ -23,6 +23,23 @@ jobs:
   quality:
     name: lint, types, tests
     runs-on: ubuntu-latest
+    # Throw-away database for the tests; the password exists only inside this CI job.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: agilesim_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AGILESIM_TEST_DATABASE_URL: postgresql://postgres:ci-only-password@localhost:5432/agilesim_test
     steps:
       - uses: actions/checkout@v7
 
@@ -48,6 +65,19 @@ jobs:
 
       - name: Unit tests (pytest)
         run: uv run pytest --junitxml=reports/junit.xml --cov-report=xml:reports/coverage.xml
+
+      - name: Export the schema as SQL (alembic offline mode)
+        run: |
+          mkdir -p reports
+          AGILESIM_MIGRATION_DATABASE_URL=postgresql://offline@localhost/offline \
+            uv run alembic -c alembic.ini upgrade head --sql > reports/schema.sql
+
+      - name: docs/schema.sql is up to date
+        run: |
+          diff -u ../docs/schema.sql reports/schema.sql || {
+            echo "::error::docs/schema.sql is stale. Regenerate it: cd backend && AGILESIM_MIGRATION_DATABASE_URL=postgresql://offline@localhost/offline uv run alembic -c alembic.ini upgrade head --sql > ../docs/schema.sql"
+            exit 1
+          }
 
       - name: Upload test and coverage reports
         if: always()

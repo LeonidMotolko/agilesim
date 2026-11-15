@@ -20,4 +20,6 @@ COPY --from=builder --chown=app:app /app /app
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 USER app
 EXPOSE 8000
-CMD ["uvicorn", "agilesim.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Apply pending migrations (as the schema owner), then start the API (as the limited role).
+# The API process does not inherit the schema owner's URL, so it never holds those credentials.
+CMD ["sh", "-c", "python -m agilesim.db.migrate && exec env -u AGILESIM_MIGRATION_DATABASE_URL uvicorn agilesim.main:app --host 0.0.0.0 --port 8000"]

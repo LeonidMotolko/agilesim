@@ -5,3 +5,4 @@
 *.pdf binary
 *.pptx binary
 *.docx binary
+docs/schema.sql linguist-generated=true
