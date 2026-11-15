@@ -1,0 +1,65 @@
+name: agilesim
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agilesim}
+      POSTGRES_USER: ${POSTGRES_USER:-agilesim}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set POSTGRES_PASSWORD}
+      # Read by db/init/10-app-role.sh, which creates the limited login role of the application.
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?copy .env.example to .env and set POSTGRES_APP_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      # Over TCP: during the first start the image runs db/init/ on a socket-only temporary
+      # server, which a socket check would already report as ready.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      AGILESIM_APP_ENV: ${AGILESIM_APP_ENV:-development}
+      # Run time: the limited role agilesim_app (member of app_write), never the superuser.
+      AGILESIM_DATABASE_URL: postgresql://agilesim_app:${POSTGRES_APP_PASSWORD}@db:5432/${POSTGRES_DB:-agilesim}
+      # Migrations only: the schema owner. The container runs them before the API starts.
+      AGILESIM_MIGRATION_DATABASE_URL: postgresql://${POSTGRES_USER:-agilesim}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-agilesim}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health/db', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  db_data:
