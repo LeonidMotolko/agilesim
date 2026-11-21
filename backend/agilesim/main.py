@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from agilesim.api.routers import auth, game, sessions
+from agilesim.api.routers import auth, events, game, sessions
 from agilesim.config import DEFAULT_JWT_SECRET, ENV_DEVELOPMENT, get_settings
 from agilesim.core.constants import API_PREFIX
 from agilesim.core.errors import register_error_handlers
@@ -25,6 +25,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix=API_PREFIX)
     app.include_router(sessions.router, prefix=API_PREFIX)
     app.include_router(game.router, prefix=API_PREFIX)
+    app.include_router(events.router, prefix=API_PREFIX)
 
     @app.get("/health", tags=["system"])
     def health() -> dict[str, str]:

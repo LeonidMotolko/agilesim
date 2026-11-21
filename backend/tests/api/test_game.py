@@ -65,15 +65,21 @@ class Game:
         )
 
 
-def seed_cards(db: Session, count: int = CARD_COUNT) -> None:
+EMERGENCY_NUMBER = 99
+
+
+def seed_cards(db: Session, count: int = CARD_COUNT, *, emergency: bool = False) -> None:
     scenario = factories.startup_flow(db)
     stage_ids = {code: stage.id for code, stage in factories.stages(db, scenario).items()}
-    for number in range(1, count + 1):
+    numbers = [*range(1, count + 1), *([EMERGENCY_NUMBER] if emergency else [])]
+    for number in numbers:
+        is_emergency = number == EMERGENCY_NUMBER
         card = ScenarioCard(
             scenario_id=scenario.id,
             number=number,
-            title=f"Card {number}",
-            value=Decimal(number * 10),
+            title="Critical bug" if is_emergency else f"Card {number}",
+            value=Decimal(0 if is_emergency else number * 10),
+            is_emergency=is_emergency,
         )
         db.add(card)
         db.flush()
@@ -90,9 +96,15 @@ def seed_cards(db: Session, count: int = CARD_COUNT) -> None:
 
 
 def new_game(
-    client: TestClient, db: Session, *, start: bool = True, email: str = "f@x.com"
+    client: TestClient,
+    db: Session,
+    *,
+    start: bool = True,
+    email: str = "f@x.com",
+    cards: int = CARD_COUNT,
+    emergency: bool = False,
 ) -> Game:
-    seed_cards(db)
+    seed_cards(db, cards, emergency=emergency)
     facilitator = register_facilitator(client, email)
     session = create_session(client, facilitator)
     team = create_team(client, facilitator, session["id"], "Alpha")

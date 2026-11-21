@@ -14,6 +14,7 @@ from agilesim.core.errors import ForbiddenError, UnauthorizedError
 from agilesim.core.security import decode_access_token
 from agilesim.db.session import get_session
 from agilesim.services.auth import AuthService
+from agilesim.services.events import EventService
 from agilesim.services.game import GameService
 from agilesim.services.sessions import SessionService
 
@@ -67,9 +68,14 @@ def get_game_service(session: DbSession) -> GameService:
     return GameService(session)
 
 
+def get_event_service(session: DbSession) -> EventService:
+    return EventService(session)
+
+
 CurrentPrincipal = Annotated[Principal, Depends(get_principal)]
 CurrentFacilitator = Annotated[Principal, Depends(require_facilitator)]
 CurrentParticipant = Annotated[Principal, Depends(require_participant)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 SessionServiceDep = Annotated[SessionService, Depends(get_session_service)]
 GameServiceDep = Annotated[GameService, Depends(get_game_service)]
+EventServiceDep = Annotated[EventService, Depends(get_event_service)]
