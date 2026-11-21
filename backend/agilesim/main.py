@@ -5,13 +5,21 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from agilesim.config import get_settings
+from agilesim.config import DEFAULT_JWT_SECRET, ENV_DEVELOPMENT, get_settings
+from agilesim.core.errors import register_error_handlers
+from agilesim.core.logging import configure_logging, install_request_logging
 from agilesim.db.session import get_engine
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="AgileSim API", version="0.1.0", debug=settings.app_env == "development")
+    if settings.app_env != ENV_DEVELOPMENT and settings.jwt_secret == DEFAULT_JWT_SECRET:
+        msg = "AGILESIM_JWT_SECRET must be set outside the development environment"
+        raise RuntimeError(msg)
+    configure_logging(settings.log_level)
+    app = FastAPI(title="AgileSim API", version="0.1.0", debug=settings.app_env == ENV_DEVELOPMENT)
+    install_request_logging(app)
+    register_error_handlers(app)
 
     @app.get("/health", tags=["system"])
     def health() -> dict[str, str]:
