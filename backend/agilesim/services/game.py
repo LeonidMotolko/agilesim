@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from agilesim.core.constants import (
+    BLOCK_RELEASE_POINTS,
     DAY_ONE_PULL,
     DICE_MAX,
     DICE_MIN,
@@ -21,6 +22,7 @@ from agilesim.core.constants import (
     ROLE_PARTICIPANT,
     STAGE_ANALYSIS,
     STAGE_BACKLOG,
+    STAGE_DEVELOPMENT,
 )
 from agilesim.core.errors import (
     ConflictError,
@@ -44,7 +46,7 @@ from agilesim.repositories.sessions import (
     SessionRepository,
     TeamRepository,
 )
-from agilesim.rules.startup_flow import StageInfo, check_move, check_spend
+from agilesim.rules.startup_flow import check_move, check_spend
 from agilesim.schemas.game import (
     BoardOut,
     CardFlowOut,
@@ -58,6 +60,8 @@ from agilesim.schemas.game import (
     TeamResultOut,
     WipCounter,
 )
+from agilesim.services.board import Layout, build_layout, log_move
+from agilesim.services.events import propose_events
 
 RollDie = Callable[[], int]
 
@@ -65,32 +69,6 @@ RollDie = Callable[[], int]
 def default_roll_die() -> int:
     """A fair die; ``secrets`` so that a player cannot predict the next value."""
     return secrets.randbelow(DICE_MAX - DICE_MIN + 1) + DICE_MIN
-
-
-@dataclass(slots=True)
-class Layout:
-    """The board columns of a session's scenario, with the WIP limits that apply to it."""
-
-    by_id: dict[uuid.UUID, ScenarioStage]
-    by_code: dict[str, ScenarioStage]
-    limits: dict[uuid.UUID, int | None]
-
-    def info(self, stage: ScenarioStage) -> StageInfo:
-        return StageInfo(
-            code=stage.code,
-            name=stage.name,
-            kind=stage.kind,
-            position=stage.position,
-            wip_limit=self.limits.get(stage.id),
-        )
-
-    def next_after(self, stage: ScenarioStage) -> ScenarioStage | None:
-        following = [s for s in self.by_id.values() if s.position == stage.position + 1]
-        return following[0] if following else None
-
-    def work_stages(self) -> list[ScenarioStage]:
-        stages = [s for s in self.by_id.values() if s.kind is StageKind.WORK]
-        return sorted(stages, key=lambda s: s.position)
 
 
 @dataclass(slots=True)
@@ -138,6 +116,7 @@ class GameService:
         game.status = SessionStatus.RUNNING
         game.current_day = 1
         game.started_at = datetime.now(UTC)
+        propose_events(self._session, game, game.current_day)
         self._session.commit()
         return game
 
@@ -153,6 +132,7 @@ class GameService:
             game.current_day += 1
             if game.current_day > FIRST_ROUND_LAST_DAY:
                 game.wip_limits_enabled = True
+            propose_events(self._session, game, game.current_day)
         self._session.commit()
         return game
 
@@ -238,6 +218,8 @@ class GameService:
         if roll is None:
             raise RuleViolationError(f"Roll the {source.name} die first")
         points_left = roll.value - self._repo.points_spent(ctx.team.id, source.id, day)
+        if card.is_blocked:
+            return self._spend_on_block(ctx, found, source, target, body, points_left)
         squares = self._repo.squares_left(card.id)
         left_here = squares.get(target.id, 0)
 
@@ -366,12 +348,7 @@ class GameService:
         return PlayContext(team=team, game=game, participant=participant, layout=self._layout(game))
 
     def _layout(self, game: GameSession) -> Layout:
-        stages = self._repo.stages(game.scenario_id)
-        overrides = self._repo.stage_limits(game.id)
-        limits = {s.id: overrides.get(s.id, s.default_wip_limit) for s in stages}
-        return Layout(
-            by_id={s.id: s for s in stages}, by_code={s.code: s for s in stages}, limits=limits
-        )
+        return build_layout(self._repo, game)
 
     def _log_move(
         self,
@@ -381,19 +358,7 @@ class GameService:
         state: CardColumnState | None,
         **fields: Any,
     ) -> None:
-        """Append a movement; the database trigger updates the card, which is then reloaded."""
-        values: dict[str, Any] = {
-            "team_id": card.team_id,
-            "card_id": card.id,
-            "day": day,
-            "from_stage_id": card.stage_id,
-            "from_state": card.stage_state,
-            "to_stage_id": target.id,
-            "to_state": state,
-            "request_id": uuid.uuid4(),
-        } | fields
-        self._repo.add_movement(**values)
-        self._repo.refresh(card)
+        log_move(self._repo, card, day, target, state, **fields)
 
     def _card_out(self, card: Card, scenario_card: ScenarioCard, layout: Layout) -> CardOut:
         squares = self._repo.squares_left(card.id)
@@ -425,6 +390,55 @@ class GameService:
                 )
             )
         return dice
+
+    def _spend_on_block(
+        self,
+        ctx: PlayContext,
+        found: tuple[Card, ScenarioCard],
+        source: ScenarioStage,
+        target: ScenarioStage,
+        body: SpendRequest,
+        points_left: int,
+    ) -> SpendOut:
+        """Points on a BLOCKED card only remove the block (3 full Development points)."""
+        card, scenario_card = found
+        if source.code != STAGE_DEVELOPMENT or target.code != STAGE_DEVELOPMENT:
+            raise RuleViolationError("Card blocked: only Development points can unblock it")
+        if body.points > points_left:
+            raise RuleViolationError(f"Only {points_left} points left")
+        done = self._repo.unblock_progress(card.id, target.id, card.updated_at)
+        needed = BLOCK_RELEASE_POINTS - done
+        if body.points > needed:
+            raise RuleViolationError(f"Only {needed} more points are needed to unblock the card")
+        try:
+            # The log row says "points spent in Development"; no square is crossed out, the
+            # points went to the block, which is why the response reports zero squares.
+            self._repo.add_spend(
+                team_id=ctx.team.id,
+                card_id=card.id,
+                day=ctx.game.current_day,
+                source_stage_id=source.id,
+                target_stage_id=target.id,
+                points_spent=body.points,
+                squares_crossed=body.points,
+                actor_participant_id=ctx.participant.id,
+                request_id=body.request_id,
+            )
+            if body.points == needed:
+                card.is_blocked = False
+                self._session.flush()
+                self._repo.refresh(card)
+            self._session.commit()
+        except IntegrityError as exc:
+            self._session.rollback()
+            raise ConflictError("This request could not be saved, please try again") from exc
+        return SpendOut(
+            card=self._card_out(card, scenario_card, ctx.layout),
+            points_spent=body.points,
+            squares_crossed=0,
+            points_lost_to_rounding=0,
+            points_left=points_left - body.points,
+        )
 
     def _replayed_spend(self, ctx: PlayContext, spend: PointSpend) -> SpendOut:
         found = self._repo.get_card(ctx.team.id, spend.card_id)

@@ -190,7 +190,10 @@ class GameRepository:
         ).one_or_none()
 
     def add_spend(self, **fields: Any) -> PointSpend:
-        spend = PointSpend(**fields)
+        # The database clock, like the trigger that stamps cards.updated_at: unblocking progress
+        # compares the two, so both must come from the same clock (and not from now(), which is
+        # frozen for the whole transaction).
+        spend = PointSpend(occurred_at=sa.func.clock_timestamp(), **fields)
         self._session.add(spend)
         self._session.flush()
         return spend
@@ -237,3 +240,52 @@ class GameRepository:
             {"team_id": team_id},
         )
         return [dict(row._mapping) for row in rows]
+
+    # ------------------------------------------------------------------ events and blocks
+
+    def backlog_cards(
+        self, team_id: uuid.UUID, backlog_stage_id: uuid.UUID
+    ) -> list[tuple[Card, ScenarioCard]]:
+        """The team's cards still in the backlog, most valuable first (no emergency card)."""
+        rows = self._session.execute(
+            sa.select(Card, ScenarioCard)
+            .join(ScenarioCard, ScenarioCard.id == Card.scenario_card_id)
+            .where(
+                Card.team_id == team_id,
+                Card.stage_id == backlog_stage_id,
+                ScenarioCard.is_emergency.is_(False),
+            )
+            .order_by(ScenarioCard.value.desc(), ScenarioCard.number)
+        )
+        return [(card, scenario_card) for card, scenario_card in rows]
+
+    def top_card_in_stage(self, team_id: uuid.UUID, stage_id: uuid.UUID) -> Card | None:
+        """The most valuable card of a column that is not blocked yet."""
+        return self._session.scalars(
+            sa.select(Card)
+            .join(ScenarioCard, ScenarioCard.id == Card.scenario_card_id)
+            .where(Card.team_id == team_id, Card.stage_id == stage_id, Card.is_blocked.is_(False))
+            .order_by(ScenarioCard.value.desc(), ScenarioCard.number)
+            .limit(1)
+        ).one_or_none()
+
+    def emergency_scenario_card(self, scenario_id: uuid.UUID) -> ScenarioCard | None:
+        return self._session.scalars(
+            sa.select(ScenarioCard)
+            .where(ScenarioCard.scenario_id == scenario_id, ScenarioCard.is_emergency.is_(True))
+            .limit(1)
+        ).one_or_none()
+
+    def unblock_progress(self, card_id: uuid.UUID, stage_id: uuid.UUID, since: Any) -> int:
+        """Development points spent on a blocked card since it was blocked."""
+        return int(
+            self._session.scalar(
+                sa.select(sa.func.coalesce(sa.func.sum(PointSpend.points_spent), 0)).where(
+                    PointSpend.card_id == card_id,
+                    PointSpend.source_stage_id == stage_id,
+                    PointSpend.target_stage_id == stage_id,
+                    PointSpend.occurred_at >= since,
+                )
+            )
+            or 0
+        )
