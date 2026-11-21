@@ -6,8 +6,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from agilesim.api.deps import get_game_service
 from agilesim.db.session import get_session
 from agilesim.main import create_app
+from agilesim.services.game import GameService
 from tests.db import conftest as database_fixtures
 
 # Reuse the database fixtures (migrated schema, one rolled-back transaction per test).
@@ -19,9 +21,18 @@ PASSWORD = "a-long-test-password"
 
 
 @pytest.fixture
-def client(db: Session) -> Iterator[TestClient]:
+def dice() -> list[int]:
+    """Values the next die rolls will give, in order; a test appends what it needs."""
+    return []
+
+
+@pytest.fixture
+def client(db: Session, dice: list[int]) -> Iterator[TestClient]:
     app = create_app()
     app.dependency_overrides[get_session] = lambda: db
+    app.dependency_overrides[get_game_service] = lambda: GameService(
+        db, roll_die=lambda: dice.pop(0)
+    )
     with TestClient(app) as test_client:
         yield test_client
 
