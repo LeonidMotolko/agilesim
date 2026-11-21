@@ -1,11 +1,12 @@
 """Request and response bodies of the game endpoints (board, dice, points, moves, results)."""
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agilesim.db.enums import CardColumnState
+from agilesim.db.enums import CardColumnState, EventEffect, EventSource, EventStatus
 
 WorkStageCode = Literal["analysis", "development", "testing"]
 TargetStageCode = Literal["backlog", "analysis", "development", "testing", "done"]
@@ -91,3 +92,20 @@ class CardFlowOut(BaseModel):
     pulled_day: int | None
     done_day: int | None
     lead_time_days: int | None
+
+
+class EventCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=2000)
+
+
+class EventOut(BaseModel):
+    id: uuid.UUID
+    day: int
+    title: str
+    description: str
+    source: EventSource
+    status: EventStatus
+    effect: EventEffect | None = Field(description="Mechanical effect; none for manual events")
+    effect_amount: int | None
+    applied_at: datetime | None
