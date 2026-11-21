@@ -1,5 +1,7 @@
 """The pure rules of Startup Flow: points, help from another stage, moves and WIP limits."""
 
+from typing import Any
+
 import pytest
 
 from agilesim.core.errors import RuleViolationError
@@ -13,29 +15,44 @@ TESTING = StageInfo("testing", "Testing", StageKind.WORK, 3, 2)
 DONE = StageInfo("done", "Done", StageKind.DONE, 4, None)
 
 
-def spend(**overrides: object) -> int:
-    values: dict[str, object] = {
-        "points": 3,
-        "points_left": 6,
-        "same_stage": True,
-        "squares_left": 5,
-        "blocked": False,
-        "target_name": "Development",
-    }
-    return check_spend(**(values | overrides))  # type: ignore[arg-type]
+def spend(
+    *,
+    points: int = 3,
+    points_left: int = 6,
+    same_stage: bool = True,
+    squares_left: int = 5,
+    blocked: bool = False,
+    target_name: str = "Development",
+) -> int:
+    return check_spend(
+        points=points,
+        points_left=points_left,
+        same_stage=same_stage,
+        squares_left=squares_left,
+        blocked=blocked,
+        target_name=target_name,
+    )
 
 
-def move(current: StageInfo, target: StageInfo, **overrides: object) -> None:
-    values: dict[str, object] = {
-        "current": current,
-        "target": target,
-        "work_left_in_current": 0,
-        "wip_enabled": False,
-        "cards_in_target": 0,
-        "is_emergency": False,
-        "next_stage_name": None,
-    }
-    check_move(**(values | overrides))  # type: ignore[arg-type]
+def move(
+    current: StageInfo,
+    target: StageInfo,
+    *,
+    work_left_in_current: int = 0,
+    wip_enabled: bool = False,
+    cards_in_target: int = 0,
+    is_emergency: bool = False,
+    next_stage_name: str | None = None,
+) -> None:
+    check_move(
+        current=current,
+        target=target,
+        work_left_in_current=work_left_in_current,
+        wip_enabled=wip_enabled,
+        cards_in_target=cards_in_target,
+        is_emergency=is_emergency,
+        next_stage_name=next_stage_name,
+    )
 
 
 @pytest.mark.parametrize(
@@ -65,7 +82,7 @@ def test_help_from_another_stage_counts_half():
         ({"points": 6, "same_stage": False, "squares_left": 2}, "only 2 squares left"),
     ],
 )
-def test_spend_rejects_what_the_rules_forbid(overrides: dict[str, object], message: str):
+def test_spend_rejects_what_the_rules_forbid(overrides: dict[str, Any], message: str):
     with pytest.raises(RuleViolationError, match=message):
         spend(**overrides)
 
