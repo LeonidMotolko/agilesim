@@ -31,7 +31,7 @@ describe("routes", () => {
     renderAt("/");
 
     expect(screen.getByRole("heading", { name: "AgileSim" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Join a game" })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Join a game" })).toHaveLength(2);
   });
 
   it("sends a signed-out visitor from a facilitator page to the sign-in form", () => {
