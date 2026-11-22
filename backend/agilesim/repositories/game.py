@@ -16,6 +16,7 @@ from agilesim.db.models import (
     ScenarioCardWork,
     ScenarioStage,
     SessionStageLimit,
+    Team,
 )
 
 
@@ -154,15 +155,22 @@ class GameRepository:
         self._session.flush()
         return movement
 
-    def get_roll(
-        self, team_id: uuid.UUID, stage_id: uuid.UUID, day: int, *, lock: bool = False
-    ) -> DiceRoll | None:
-        query = sa.select(DiceRoll).where(
-            DiceRoll.team_id == team_id, DiceRoll.stage_id == stage_id, DiceRoll.day == day
+    def get_roll(self, team_id: uuid.UUID, stage_id: uuid.UUID, day: int) -> DiceRoll | None:
+        return self._session.scalars(
+            sa.select(DiceRoll).where(
+                DiceRoll.team_id == team_id, DiceRoll.stage_id == stage_id, DiceRoll.day == day
+            )
+        ).one_or_none()
+
+    def lock_team(self, team_id: uuid.UUID) -> None:
+        """Hold the team row until the commit, so a team's spends from one die run one by one.
+
+        The roll itself cannot be locked: ``dice_rolls`` is an append-only log and the
+        application role has no UPDATE right on it, which ``SELECT ... FOR UPDATE`` needs.
+        """
+        self._session.execute(
+            sa.select(Team.id).where(Team.id == team_id).with_for_update(key_share=True)
         )
-        if lock:
-            query = query.with_for_update()
-        return self._session.scalars(query).one_or_none()
 
     def add_roll(self, **fields: Any) -> DiceRoll:
         roll = DiceRoll(**fields)
