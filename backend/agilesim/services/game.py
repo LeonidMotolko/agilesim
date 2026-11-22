@@ -214,7 +214,8 @@ class GameService:
             raise RuleViolationError("Points can only be spent on a card in a work stage")
         source = ctx.layout.by_code[body.source_stage]
         day = ctx.game.current_day
-        roll = self._repo.get_roll(ctx.team.id, source.id, day, lock=True)
+        self._repo.lock_team(ctx.team.id)
+        roll = self._repo.get_roll(ctx.team.id, source.id, day)
         if roll is None:
             raise RuleViolationError(f"Roll the {source.name} die first")
         points_left = roll.value - self._repo.points_spent(ctx.team.id, source.id, day)
