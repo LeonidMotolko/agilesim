@@ -13,7 +13,7 @@ export const RESULT_COLUMNS: Column<TeamResult>[] = [
   {
     key: "rank",
     header: "Rank",
-    render: (row) => row.money_rank,
+    render: (row) => <span className={`rank rank-${row.money_rank}`}>{row.money_rank}</span>,
     sortValue: (row) => row.money_rank,
   },
   {

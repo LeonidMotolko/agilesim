@@ -3,6 +3,16 @@ import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../state/AuthContext";
 import { ApiStatus } from "./ApiStatus";
 
+function BrandMark() {
+  return (
+    <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="3" y="4" width="26" height="7" rx="2" fill="var(--analysis)" />
+      <rect x="3" y="13" width="20" height="7" rx="2" fill="var(--development)" />
+      <rect x="3" y="22" width="14" height="7" rx="2" fill="var(--done)" />
+    </svg>
+  );
+}
+
 export function Layout() {
   const { auth, signOut } = useAuth();
   const navigate = useNavigate();
@@ -16,6 +26,7 @@ export function Layout() {
     <div className="shell">
       <header className="topbar">
         <Link to="/" className="brand">
+          <BrandMark />
           AgileSim
         </Link>
         <nav aria-label="Main">

@@ -1,15 +1,18 @@
 import { useCallback, useState, type FormEvent } from "react";
 
 import { BoardView } from "../components/BoardView";
+import { DayStrip } from "../components/DayStrip";
+import { DieTray } from "../components/Dice";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { LoadingState } from "../components/LoadingState";
+import { useToast } from "../components/Toasts";
 import { POLL_MS, WORK_STAGES, stageLabel } from "../constants";
 import { useAction } from "../hooks/useAction";
 import { useAsync } from "../hooks/useAsync";
 import { api } from "../services/api";
 import { useAuth } from "../state/AuthContext";
 import type { Board, Card, StageCode, WorkStage } from "../types/api";
-import { newRequestId } from "../utils/errors";
+import { describeError, newRequestId } from "../utils/errors";
 
 export function PlayPage() {
   const { auth } = useAuth();
@@ -44,19 +47,27 @@ function TeamPlay({ teamId, sessionId, playerName, rejoinToken }: TeamPlayProps)
     (signal: AbortSignal) => api.listEvents(sessionId, signal),
     [sessionId],
   );
+  const { notify } = useToast();
   const board = useAsync(loadBoard, { pollMs: POLL_MS });
   const events = useAsync(loadEvents, { pollMs: 5000 });
-  const action = useAction();
-  const [notice, setNotice] = useState("");
+  const action = useAction((caught) => notify(describeError(caught), "error"));
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const act = async (work: () => Promise<string | void>) => {
-    setNotice("");
-    const message = await action.run(work);
-    if (typeof message === "string") {
-      setNotice(message);
+  // Runs one action and refetches the board before the buttons come back, so nobody can press
+  // "Move" again on a card that has already moved. Resolves to false when the action failed.
+  const act = async (work: () => Promise<string>): Promise<boolean> => {
+    const message = await action.run(async () => {
+      try {
+        return await work();
+      } finally {
+        await board.reload();
+      }
+    });
+    if (message === undefined) {
+      return false;
     }
-    board.reload();
+    notify(message);
+    return true;
   };
 
   const data = board.data;
@@ -82,112 +93,85 @@ function TeamPlay({ teamId, sessionId, playerName, rejoinToken }: TeamPlayProps)
     });
   };
 
-  const handleRoll = (stage: WorkStage) => {
-    void act(async () => {
+  const handleRoll = (stage: WorkStage): Promise<boolean> =>
+    act(async () => {
       const roll = await api.rollDie(teamId, stage);
       return `${stageLabel(stage)} die: ${roll.value}`;
     });
-  };
 
   return (
-    <section>
-      <h1>Your board</h1>
-      <p className="card-meta">
-        {playerName} · {data.day === 0 ? "Waiting for the facilitator to start" : `Day ${data.day}`}
-        {data.wip_limits_enabled ? " · WIP limits on" : ""}
-      </p>
-      {rejoinToken !== null ? (
-        <details>
-          <summary>My rejoin code</summary>
-          <p>
-            Keep this code to return after closing the page: <code>{rejoinToken}</code>
+    <div className="play">
+      <aside className="desk" aria-label="Your desk">
+        <header>
+          <h1>Your board</h1>
+          <p className="muted">Playing as {playerName}</p>
+        </header>
+        <DayStrip day={data.day} note={data.wip_limits_enabled ? "WIP limits on" : undefined} />
+
+        {todaysEvents.map((event) => (
+          <p key={event.id} className="today-event" role="status">
+            <strong>{event.title}.</strong> {event.description}
           </p>
-        </details>
-      ) : null}
+        ))}
 
-      {todaysEvents.map((event) => (
-        <div key={event.id} className="banner banner-info" role="status">
-          <strong>{event.title}.</strong> {event.description}
-        </div>
-      ))}
-      <ErrorBanner error={action.error} />
-      {notice !== "" ? (
-        <div className="banner banner-info" role="status">
-          {notice}
-        </div>
-      ) : null}
+        <section className="panel" aria-label="Dice">
+          <h2>Dice</h2>
+          <ul className="dice-row">
+            {WORK_STAGES.map((stage) => (
+              <DieTray
+                key={stage}
+                stage={stage}
+                die={data.dice.find((item) => item.stage === stage)}
+                disabled={action.busy || data.day === 0}
+                onRoll={handleRoll}
+              />
+            ))}
+          </ul>
+        </section>
 
-      <DicePanel board={data} busy={action.busy} onRoll={handleRoll} />
-      <SpendPanel
-        board={data}
-        selectedId={selectedId}
-        busy={action.busy}
-        onSpend={(card, source, points) =>
-          void act(async () => {
-            const result = await api.spend(teamId, {
-              card_id: card.id,
-              source_stage: source,
-              points,
-              request_id: newRequestId(),
-            });
-            return result.squares_crossed > 0
-              ? `Crossed out ${result.squares_crossed} square(s); ${result.points_left} points left`
-              : `Points used; ${result.points_left} left`;
-          })
-        }
-      />
-      <BoardView
-        board={data}
-        onMove={handleMove}
-        onSelect={(card) => setSelectedId(card.id)}
-        selectedCardId={selectedId}
-        busy={action.busy}
-      />
-    </section>
+        <SpendPanel
+          board={data}
+          selectedId={selectedId}
+          busy={action.busy}
+          onSpend={(card, source, points) =>
+            void act(async () => {
+              const result = await api.spend(teamId, {
+                card_id: card.id,
+                source_stage: source,
+                points,
+                request_id: newRequestId(),
+              });
+              return result.squares_crossed > 0
+                ? `Crossed out ${result.squares_crossed} square(s); ${result.points_left} points left`
+                : `Points used; ${result.points_left} left`;
+            })
+          }
+        />
+
+        {rejoinToken !== null ? (
+          <details className="rejoin">
+            <summary>My rejoin code</summary>
+            <p>
+              Keep this code to return after closing the page: <code>{rejoinToken}</code>
+            </p>
+          </details>
+        ) : null}
+      </aside>
+
+      <section className="board-area" aria-label="Team board">
+        <BoardView
+          board={data}
+          onMove={handleMove}
+          onSelect={(card) => setSelectedId(card.id)}
+          selectedCardId={selectedId}
+          busy={action.busy}
+        />
+      </section>
+    </div>
   );
 }
 
-function DicePanel({
-  board,
-  busy,
-  onRoll,
-}: {
-  board: Board;
-  busy: boolean;
-  onRoll: (stage: WorkStage) => void;
-}) {
-  return (
-    <section className="panel" aria-label="Dice">
-      <h2>Dice</h2>
-      <ul className="dice">
-        {WORK_STAGES.map((stage) => {
-          const die = board.dice.find((item) => item.stage === stage);
-          return (
-            <li key={stage}>
-              <strong>{stageLabel(stage)}</strong>
-              {die !== undefined ? (
-                <span>
-                  {" "}
-                  rolled {die.value} · {die.points_left} left
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  disabled={busy || board.day === 0}
-                  onClick={() => onRoll(stage)}
-                >
-                  Roll
-                </button>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
-
-function SpendPanel({
+export function SpendPanel({
   board,
   selectedId,
   busy,
@@ -201,64 +185,93 @@ function SpendPanel({
   const [source, setSource] = useState<WorkStage | "">("");
   const [points, setPoints] = useState(1);
   const card = board.cards.find((item) => item.id === selectedId);
-  const sources = board.dice.filter((die) => die.points_left > 0);
-  const chosen = sources.find((die) => die.stage === source) ?? sources[0];
+  const withPoints = board.dice.filter((die) => die.points_left > 0);
+  const chosen = withPoints.find((die) => die.stage === source) ?? withPoints[0];
+  const available = chosen?.points_left ?? 1;
+  const amount = Math.min(Math.max(points, 1), available);
+  const workable =
+    card !== undefined && WORK_STAGES.some((stage) => stage === card.stage) && chosen !== undefined;
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
-    if (card !== undefined && chosen !== undefined) {
-      onSpend(card, chosen.stage as WorkStage, Math.min(points, chosen.points_left));
+    if (card !== undefined && chosen !== undefined && workable) {
+      onSpend(card, chosen.stage as WorkStage, amount);
     }
   };
 
+  let hint = "";
   if (card === undefined) {
-    return (
-      <section className="panel">
-        <h2>Spend points</h2>
-        <p>Choose “Work on it” on a card to spend dice points on it.</p>
-      </section>
-    );
+    hint = "Press “Work on it” on a card in Analysis, Development or Testing.";
+  } else if (!WORK_STAGES.some((stage) => stage === card.stage)) {
+    hint = "This card is not in a work stage. Pick another one.";
+  } else if (withPoints.length === 0) {
+    hint = "Roll a die first, or all of today’s points are used.";
+  } else if (chosen !== undefined && card.stage !== chosen.stage) {
+    hint = "Help from another stage counts half, rounded down.";
   }
+
   return (
-    <section className="panel">
-      <h2>Spend points on ID-{card.number}</h2>
-      {sources.length === 0 ? (
-        <p>Roll a die first, or all today’s points are used.</p>
-      ) : (
-        <form className="inline-form" onSubmit={handleSubmit}>
-          <div className="field">
-            <label htmlFor="spend-source">From die</label>
-            <select
-              id="spend-source"
-              value={chosen?.stage ?? ""}
-              onChange={(event) => setSource(event.target.value as WorkStage)}
-            >
-              {sources.map((die) => (
-                <option key={die.stage} value={die.stage}>
-                  {stageLabel(die.stage)} ({die.points_left} left)
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="spend-points">Points</label>
-            <input
-              id="spend-points"
-              type="number"
-              min={1}
-              max={chosen?.points_left ?? 1}
-              value={points}
-              onChange={(event) => setPoints(Number(event.target.value) || 1)}
-            />
-          </div>
-          <button type="submit" disabled={busy}>
+    <section className="panel spend" aria-label="Spend points">
+      <h2>Spend points</h2>
+      <p className="spend-target">
+        {card !== undefined ? (
+          <>
+            <strong>ID-{card.number}</strong> {card.title}
+          </>
+        ) : (
+          <span className="muted">No card chosen</span>
+        )}
+      </p>
+      <form onSubmit={handleSubmit}>
+        <div className="source-group" role="radiogroup" aria-label="Spend from die">
+          {WORK_STAGES.map((stage) => {
+            const left = board.dice.find((die) => die.stage === stage)?.points_left ?? 0;
+            const active = chosen?.stage === stage;
+            return (
+              <button
+                key={stage}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                aria-label={`${stageLabel(stage)}, ${left} points left`}
+                disabled={left === 0}
+                className={`source stage-${stage}${active ? " active" : ""}`}
+                onClick={() => setSource(stage)}
+              >
+                <span>{stageLabel(stage)}</span>
+                <strong>{left}</strong>
+              </button>
+            );
+          })}
+        </div>
+        <div className="stepper">
+          <button
+            type="button"
+            className="secondary step"
+            aria-label="Fewer points"
+            disabled={amount <= 1}
+            onClick={() => setPoints(amount - 1)}
+          >
+            −
+          </button>
+          <output aria-label="Points to spend" aria-live="polite">
+            {amount}
+          </output>
+          <button
+            type="button"
+            className="secondary step"
+            aria-label="More points"
+            disabled={amount >= available}
+            onClick={() => setPoints(amount + 1)}
+          >
+            +
+          </button>
+          <button type="submit" className="spend-go" disabled={busy || !workable}>
             Spend
           </button>
-        </form>
-      )}
-      {card.stage !== chosen?.stage && chosen !== undefined ? (
-        <p className="card-meta">Help from another stage counts half, rounded down.</p>
-      ) : null}
+        </div>
+      </form>
+      <p className="hint">{hint}</p>
     </section>
   );
 }

@@ -8,7 +8,8 @@ export interface AsyncState<T> {
   error: ApiError | null;
   /** True during the first load and after a visible reload, not during silent polling. */
   loading: boolean;
-  reload: () => void;
+  /** Starts a quiet reload; the promise settles when it has finished (it never rejects). */
+  reload: () => Promise<void>;
 }
 
 interface Options {
@@ -30,6 +31,11 @@ export function useAsync<T>(
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
   const silent = useRef(false);
+  const waiters = useRef<(() => void)[]>([]);
+
+  const settle = useCallback(() => {
+    waiters.current.splice(0).forEach((resolve) => resolve());
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -43,16 +49,21 @@ export function useAsync<T>(
           setData(result);
           setError(null);
           setLoading(false);
+          settle();
         }
       })
       .catch((caught: unknown) => {
         if (!controller.signal.aborted) {
           setError(asApiError(caught));
           setLoading(false);
+          settle();
         }
       });
     return () => controller.abort();
-  }, [load, tick]);
+  }, [load, tick, settle]);
+
+  // Nobody keeps waiting for a reload after the page is gone.
+  useEffect(() => settle, [settle]);
 
   useEffect(() => {
     if (pollMs === undefined) {
@@ -67,7 +78,11 @@ export function useAsync<T>(
 
   const reload = useCallback(() => {
     silent.current = true;
+    const finished = new Promise<void>((resolve) => {
+      waiters.current.push(resolve);
+    });
     setTick((value) => value + 1);
+    return finished;
   }, []);
 
   return { data, error, loading, reload };
