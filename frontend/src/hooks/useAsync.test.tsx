@@ -11,11 +11,14 @@ describe("useAsync", () => {
     await waitFor(() => expect(result.current.data).toBe(1));
 
     value = 2;
-    await act(async () => {
-      await result.current.reload();
+    let finished: Promise<void> = Promise.resolve();
+    // Not awaited inside act: the reload needs a render, which act only flushes when it ends.
+    act(() => {
+      finished = result.current.reload();
     });
+    await finished;
 
-    expect(result.current.data).toBe(2);
     expect(load).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(result.current.data).toBe(2));
   });
 });
