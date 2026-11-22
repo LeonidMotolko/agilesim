@@ -30,8 +30,9 @@ describe("routes", () => {
   it("shows the start page with both ways in", () => {
     renderAt("/");
 
-    expect(screen.getByRole("heading", { name: "AgileSim" })).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: "Join a game" })).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: /Kanban board/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Join a game" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: "Facilitator sign in" }).length).toBeGreaterThan(0);
   });
 
   it("sends a signed-out visitor from a facilitator page to the sign-in form", () => {

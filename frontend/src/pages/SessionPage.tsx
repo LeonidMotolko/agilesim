@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useParams } from "react-router-dom";
 
+import { DayStrip } from "../components/DayStrip";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { EventsPanel } from "../components/EventsPanel";
 import { LoadingState } from "../components/LoadingState";
@@ -46,16 +47,20 @@ export function SessionPage() {
 
   return (
     <section>
-      <h1>{game.name}</h1>
-      <div className="panel summary">
-        <p>
-          Join code <code className="join-code">{game.join_code}</code>
-        </p>
-        <p>
-          Status: <strong>{game.status}</strong>
-          {game.status !== "lobby" ? ` · Day ${game.current_day} of ${GAME_DAYS}` : ""}
-          {game.wip_limits_enabled ? " · WIP limits on" : ""}
-        </p>
+      <header className="session-head">
+        <div>
+          <h1>{game.name}</h1>
+          <span className={`status status-${game.status}`}>{game.status}</span>
+          {game.wip_limits_enabled ? <span className="chip">WIP limits on</span> : null}
+        </div>
+        <div className="join-ticket">
+          <span>Join code</span>
+          <code className="join-code">{game.join_code}</code>
+        </div>
+      </header>
+
+      <div className="panel control-bar">
+        <DayStrip day={game.status === "lobby" ? 0 : game.current_day} />
         {game.status === "lobby" ? (
           <button
             type="button"
