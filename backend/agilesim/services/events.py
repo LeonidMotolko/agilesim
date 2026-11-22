@@ -3,6 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from agilesim.core.constants import (
@@ -95,14 +96,20 @@ class EventService:
     ) -> EventOut:
         game = self._owned_running(session_id, facilitator_id)
         event, template = self._pending_event(game, event_id)
-        if template is not None:
-            self._run_effect(game, template)
-        now = datetime.now(UTC)
-        event.status = EventStatus.APPLIED
-        event.confirmed_by = facilitator_id
-        event.confirmed_at = now
-        event.applied_at = now
-        self._session.commit()
+        try:
+            if template is not None:
+                self._run_effect(game, template)
+            now = datetime.now(UTC)
+            event.status = EventStatus.APPLIED
+            event.confirmed_by = facilitator_id
+            event.confirmed_at = now
+            event.applied_at = now
+            self._session.commit()
+        except IntegrityError as exc:
+            # A player moved a card that the effect moves too (the movement trigger refuses a
+            # card that is no longer where the effect found it).
+            self._session.rollback()
+            raise ConflictError("The boards changed meanwhile, apply the event again") from exc
         return self._out(event, template)
 
     def dismiss(

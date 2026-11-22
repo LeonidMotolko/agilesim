@@ -19,6 +19,8 @@ from tests.api.conftest import (
 )
 from tests.db import factories
 
+pytestmark = pytest.mark.db
+
 # Work squares of every test card: Analysis 2, Development 3, Testing 2.
 SQUARES = {"analysis": 2, "development": 3, "testing": 2}
 CARD_COUNT = 6  # numbers 1..6, worth 10..60: the five best are 2..6, card 1 stays in the backlog

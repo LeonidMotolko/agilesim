@@ -92,7 +92,8 @@ class GameService:
 
     def start(self, session_id: uuid.UUID, facilitator_id: uuid.UUID) -> GameSession:
         """Deal the cards to every team, pull the first five (day 1) and open the game."""
-        game = self._owned_game(session_id, facilitator_id)
+        # Locked: a second start waits here and then sees that the game is running.
+        game = self._owned_game(session_id, facilitator_id, lock=True)
         if game.status is not SessionStatus.LOBBY:
             raise ConflictError("The game has already started")
         teams = self._teams.list_for_session(game.id)
@@ -122,7 +123,9 @@ class GameService:
 
     def next_day(self, session_id: uuid.UUID, facilitator_id: uuid.UUID) -> GameSession:
         """Close the day. From day 5 the WIP limits apply; after the last day the game ends."""
-        game = self._owned_game(session_id, facilitator_id)
+        # Locked: concurrent calls see each other's day instead of proposing the same events
+        # twice (unique key violation) or overwriting the day.
+        game = self._owned_game(session_id, facilitator_id, lock=True)
         if game.status is not SessionStatus.RUNNING:
             raise ConflictError("The game is not running")
         if game.current_day >= GAME_DAYS:
@@ -281,6 +284,9 @@ class GameService:
         target = ctx.layout.by_code[body.to_stage]
         if card.is_blocked:
             raise RuleViolationError("Card blocked")
+        # Two players moving different cards into the same column must not both pass the WIP
+        # check: the team lock makes their counts and inserts run one after the other.
+        self._repo.lock_team(ctx.team.id)
         squares = self._repo.squares_left(card.id)
         next_stage = ctx.layout.next_after(current)
         check_move(
@@ -313,8 +319,10 @@ class GameService:
 
     # ------------------------------------------------------------------ helpers
 
-    def _owned_game(self, session_id: uuid.UUID, facilitator_id: uuid.UUID) -> GameSession:
-        game = self._games.get(session_id)
+    def _owned_game(
+        self, session_id: uuid.UUID, facilitator_id: uuid.UUID, *, lock: bool = False
+    ) -> GameSession:
+        game = self._games.get_for_update(session_id) if lock else self._games.get(session_id)
         if game is None:
             raise NotFoundError("Session not found")
         if game.facilitator_id != facilitator_id:
