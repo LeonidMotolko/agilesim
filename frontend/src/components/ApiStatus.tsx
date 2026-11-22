@@ -22,7 +22,10 @@ export function ApiStatus() {
 
   return (
     <p className="api-status">
-      API status: <strong data-testid="api-status">{status}</strong>
+      API status:{" "}
+      <strong data-testid="api-status" data-status={status}>
+        {status}
+      </strong>
     </p>
   );
 }
