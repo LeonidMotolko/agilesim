@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from agilesim.db.enums import CardColumnState
 from agilesim.db.models import CardMovement, DiceRoll, GameSession, Participant, Team
+from agilesim.repositories.game import GameRepository
 from tests.db import factories as f
 from tests.db.conftest import as_role, failing
 
@@ -498,6 +499,21 @@ def test_app_write_plays_the_game_but_cannot_rewrite_history(db: Session) -> Non
             db.execute(sa.text("UPDATE card_movements SET day = 9"))
         with failing(db, DBAPIError, match="permission denied"):
             db.execute(sa.text("DELETE FROM card_movements"))
+
+
+def test_app_write_can_take_the_row_locks_the_game_needs(db: Session) -> None:
+    team = f.make_team(db)
+    card = f.make_card(db, team, 104, 100)
+    analysis = f.stages(db)["analysis"]
+    repo = GameRepository(db)
+
+    with as_role(db, "app_write"):
+        assert repo.get_card(team.id, card.id, lock=True) is not None
+        repo.lock_team(team.id)
+        assert repo.get_roll(team.id, analysis.id, 1) is None
+        # The dice log is append-only, so a row lock on it is refused: never lock rolls.
+        with failing(db, DBAPIError, match="permission denied"):
+            db.execute(sa.select(DiceRoll).with_for_update())
 
 
 def test_app_write_cannot_change_the_scenario_catalogue(db: Session) -> None:
