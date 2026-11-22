@@ -163,7 +163,10 @@ class GameRepository:
         ).one_or_none()
 
     def lock_team(self, team_id: uuid.UUID) -> None:
-        """Hold the team row until the commit, so a team's spends from one die run one by one.
+        """Hold the team row until the commit, so a team's spends and moves run one by one.
+
+        Spends from one die must not overdraw it, and two moves into one column must not both
+        pass its WIP limit. Callers lock the card first, then the team.
 
         The roll itself cannot be locked: ``dice_rolls`` is an append-only log and the
         application role has no UPDATE right on it, which ``SELECT ... FOR UPDATE`` needs.

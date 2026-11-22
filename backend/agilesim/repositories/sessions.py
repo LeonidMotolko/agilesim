@@ -25,6 +25,19 @@ class SessionRepository:
     def get(self, session_id: uuid.UUID) -> GameSession | None:
         return self._session.get(GameSession, session_id)
 
+    def get_for_update(self, session_id: uuid.UUID) -> GameSession | None:
+        """The session row, locked until the commit, so day changes of a session run one by one.
+
+        ``FOR NO KEY UPDATE`` needs the UPDATE right, which ``app_write`` has on
+        ``game_sessions``; it does not block the foreign-key checks of inserted child rows.
+        """
+        return self._session.scalars(
+            sa.select(GameSession)
+            .where(GameSession.id == session_id)
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        ).one_or_none()
+
     def get_by_join_code(self, join_code: str) -> GameSession | None:
         return self._session.scalars(
             sa.select(GameSession).where(GameSession.join_code == join_code)

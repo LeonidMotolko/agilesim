@@ -81,8 +81,12 @@ class SessionService:
             raise ConflictError("The session is finished")
         if self._teams.name_exists(game.id, name):
             raise ConflictError("A team with this name already exists in the session")
-        team = self._teams.add(game.id, name)
-        self._session.commit()
+        try:
+            team = self._teams.add(game.id, name)
+            self._session.commit()
+        except IntegrityError as exc:  # the same name was added between check and insert
+            self._session.rollback()
+            raise ConflictError("A team with this name already exists in the session") from exc
         return team
 
     def list_teams(self, session_id: uuid.UUID) -> list[Team]:
