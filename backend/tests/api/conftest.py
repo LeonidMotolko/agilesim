@@ -3,10 +3,12 @@
 from collections.abc import Iterator
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
-from agilesim.api.deps import get_game_service
+from agilesim.api.deps import DbSession, get_game_service
 from agilesim.db.session import get_session
 from agilesim.main import create_app
 from agilesim.services.game import GameService
@@ -28,11 +30,31 @@ def dice() -> list[int]:
 
 @pytest.fixture
 def client(db: Session, dice: list[int]) -> Iterator[TestClient]:
+    """The application, run with the privileges of ``app_write`` like in production.
+
+    The tests connect as the schema owner, who may do anything; without the role switch a
+    statement the application role is not allowed to run (a row lock on an append-only log, a
+    write to the scenario catalogue) would only fail in Docker. The test body itself keeps the
+    owner's rights, so it can still seed the catalogue.
+    """
+
+    def app_session() -> Iterator[Session]:
+        db.flush()  # rows the test added are written as the owner, not as the application
+        db.execute(sa.text("SET LOCAL ROLE app_write"))
+        try:
+            yield db
+        except DBAPIError:
+            db.rollback()  # leave the failed transaction so that the role can be reset
+            raise
+        finally:
+            db.execute(sa.text("RESET ROLE"))
+
+    def game_service(session: DbSession) -> GameService:
+        return GameService(session, roll_die=lambda: dice.pop(0))
+
     app = create_app()
-    app.dependency_overrides[get_session] = lambda: db
-    app.dependency_overrides[get_game_service] = lambda: GameService(
-        db, roll_die=lambda: dice.pop(0)
-    )
+    app.dependency_overrides[get_session] = app_session
+    app.dependency_overrides[get_game_service] = game_service
     with TestClient(app) as test_client:
         yield test_client
 

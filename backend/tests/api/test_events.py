@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from tests.api.conftest import register_facilitator
 from tests.api.test_game import EMERGENCY_NUMBER, Game, new_game
 
+pytestmark = pytest.mark.db
+
 BIG_BACKLOG = 9  # cards 1..9: the five best (5..9) are pulled on day 1, 1..4 wait
 
 

@@ -9,9 +9,11 @@ import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
-from agilesim.db.enums import CardColumnState
-from agilesim.db.models import CardMovement, DiceRoll, GameSession, Participant, Team
+from agilesim.db.enums import CardColumnState, EventSource
+from agilesim.db.models import CardMovement, DiceRoll, GameEvent, GameSession, Participant, Team
+from agilesim.repositories.events import EventRepository
 from agilesim.repositories.game import GameRepository
+from agilesim.repositories.sessions import SessionRepository
 from tests.db import factories as f
 from tests.db.conftest import as_role, failing
 
@@ -506,11 +508,21 @@ def test_app_write_can_take_the_row_locks_the_game_needs(db: Session) -> None:
     card = f.make_card(db, team, 104, 100)
     analysis = f.stages(db)["analysis"]
     repo = GameRepository(db)
+    event = GameEvent(
+        session_id=team.session_id,
+        day=1,
+        title="Fire drill",
+        description="Everyone leaves the room.",
+        source=EventSource.MANUAL,
+    )
+    db.add(event)
 
     with as_role(db, "app_write"):
         assert repo.get_card(team.id, card.id, lock=True) is not None
         repo.lock_team(team.id)
         assert repo.get_roll(team.id, analysis.id, 1) is None
+        assert SessionRepository(db).get_for_update(team.session_id) is not None
+        assert EventRepository(db).get(team.session_id, event.id) is not None
         # The dice log is append-only, so a row lock on it is refused: never lock rolls.
         with failing(db, DBAPIError, match="permission denied"):
             db.execute(sa.select(DiceRoll).with_for_update())
