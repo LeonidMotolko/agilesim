@@ -73,6 +73,9 @@ function WorkSquares({ card }: { card: Card }) {
     <ul className="squares" aria-label="Work left">
       {WORK_STAGES.map((stage) => {
         const left = squaresOf(card, stage);
+        // With more than MAX_SQUARES left the row shows one box less and a "+n" for the rest,
+        // so it still fits into a narrow column.
+        const shown = left !== null && left > MAX_SQUARES ? MAX_SQUARES - 1 : (left ?? 0);
         return (
           <li key={stage} className={`stage-${stage}`}>
             <span>{stageLabel(stage)}</span>
@@ -86,12 +89,10 @@ function WorkSquares({ card }: { card: Card }) {
                 </span>
               ) : (
                 <>
-                  {Array.from({ length: Math.min(left, MAX_SQUARES) }, (_, index) => (
+                  {Array.from({ length: shown }, (_, index) => (
                     <i key={index} />
                   ))}
-                  {left > MAX_SQUARES ? (
-                    <span className="sq-more">+{left - MAX_SQUARES}</span>
-                  ) : null}
+                  {left > MAX_SQUARES ? <span className="sq-more">+{left - shown}</span> : null}
                   <span className="visually-hidden">{left} left</span>
                 </>
               )}

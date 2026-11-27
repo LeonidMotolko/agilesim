@@ -55,6 +55,17 @@ describe("BoardView", () => {
     expect(onMove).toHaveBeenCalledWith(expect.objectContaining({ id: "c1" }), "development");
   });
 
+  it("shortens a long row of squares to four boxes and the rest as a number", () => {
+    const long = card({ squares_left: { analysis: 8, development: 5, testing: 1 } });
+    const { container } = render(<BoardView board={boardOf([long])} />);
+
+    const rows = container.querySelectorAll(".squares li");
+    expect(rows[0]?.querySelectorAll("i")).toHaveLength(4);
+    expect(rows[0]?.querySelector(".sq-more")).toHaveTextContent("+4");
+    expect(rows[1]?.querySelectorAll("i")).toHaveLength(5);
+    expect(rows[1]?.querySelector(".sq-more")).toBeNull();
+  });
+
   it("offers Work on it only for cards in a work stage", () => {
     const cards = [
       card(),
