@@ -11,7 +11,7 @@ import { useAction } from "../hooks/useAction";
 import { useAsync } from "../hooks/useAsync";
 import { api } from "../services/api";
 import { useAuth } from "../state/AuthContext";
-import type { Board, Card, StageCode, WorkStage } from "../types/api";
+import type { Board, Card, SpendResult, StageCode, WorkStage } from "../types/api";
 import { describeError, newRequestId } from "../utils/errors";
 
 export function PlayPage() {
@@ -50,6 +50,11 @@ function TeamPlay({ teamId, sessionId, playerName, rejoinToken }: TeamPlayProps)
   const { notify } = useToast();
   const board = useAsync(loadBoard, { pollMs: POLL_MS });
   const events = useAsync(loadEvents, { pollMs: 5000 });
+  const loadSession = useCallback(
+    (signal: AbortSignal) => api.getSession(sessionId, signal),
+    [sessionId],
+  );
+  const session = useAsync(loadSession, { pollMs: 5000 });
   const action = useAction((caught) => notify(describeError(caught), "error"));
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -71,6 +76,7 @@ function TeamPlay({ teamId, sessionId, playerName, rejoinToken }: TeamPlayProps)
   };
 
   const data = board.data;
+  const finished = session.data?.status === "finished";
   if (data === null) {
     return board.error !== null ? (
       <ErrorBanner error={board.error} />
@@ -84,6 +90,9 @@ function TeamPlay({ teamId, sessionId, playerName, rejoinToken }: TeamPlayProps)
   );
 
   const handleMove = (card: Card, target: string) => {
+    if (finished) {
+      return;
+    }
     void act(async () => {
       await api.moveCard(teamId, card.id, {
         to_stage: target as StageCode,
@@ -108,6 +117,12 @@ function TeamPlay({ teamId, sessionId, playerName, rejoinToken }: TeamPlayProps)
         </header>
         <DayStrip day={data.day} note={data.wip_limits_enabled ? "WIP limits on" : undefined} />
 
+        {finished ? (
+          <p className="today-event" role="status">
+            <strong>The game is over.</strong> Your facilitator will show the results.
+          </p>
+        ) : null}
+
         {todaysEvents.map((event) => (
           <p key={event.id} className="today-event" role="status">
             <strong>{event.title}.</strong> {event.description}
@@ -122,7 +137,7 @@ function TeamPlay({ teamId, sessionId, playerName, rejoinToken }: TeamPlayProps)
                 key={stage}
                 stage={stage}
                 die={data.dice.find((item) => item.stage === stage)}
-                disabled={action.busy || data.day === 0}
+                disabled={action.busy || data.day === 0 || finished}
                 onRoll={handleRoll}
               />
             ))}
@@ -133,6 +148,7 @@ function TeamPlay({ teamId, sessionId, playerName, rejoinToken }: TeamPlayProps)
           board={data}
           selectedId={selectedId}
           busy={action.busy}
+          finished={finished}
           onSpend={(card, source, points) =>
             void act(async () => {
               const result = await api.spend(teamId, {
@@ -141,9 +157,7 @@ function TeamPlay({ teamId, sessionId, playerName, rejoinToken }: TeamPlayProps)
                 points,
                 request_id: newRequestId(),
               });
-              return result.squares_crossed > 0
-                ? `Crossed out ${result.squares_crossed} square(s); ${result.points_left} points left`
-                : `Points used; ${result.points_left} left`;
+              return describeSpend(card, result);
             })
           }
         />
@@ -161,8 +175,8 @@ function TeamPlay({ teamId, sessionId, playerName, rejoinToken }: TeamPlayProps)
       <section className="board-area" aria-label="Team board">
         <BoardView
           board={data}
-          onMove={handleMove}
-          onSelect={(card) => setSelectedId(card.id)}
+          onMove={finished ? undefined : handleMove}
+          onSelect={finished ? undefined : (card) => setSelectedId(card.id)}
           selectedCardId={selectedId}
           busy={action.busy}
         />
@@ -171,15 +185,36 @@ function TeamPlay({ teamId, sessionId, playerName, rejoinToken }: TeamPlayProps)
   );
 }
 
+function pluralize(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/** What the toast says after points were spent; it names the unblocking, which has no squares. */
+export function describeSpend(card: Card, result: SpendResult): string {
+  const left = `${pluralize(result.points_left, "point")} left`;
+  if (card.is_blocked && !result.card.is_blocked) {
+    return `ID-${card.number} is unblocked; ${left}`;
+  }
+  if (card.is_blocked) {
+    return `Points went to unblocking ID-${card.number}; ${left}`;
+  }
+  if (result.squares_crossed > 0) {
+    return `Crossed out ${pluralize(result.squares_crossed, "square")}; ${left}`;
+  }
+  return `Points used; ${left}`;
+}
+
 export function SpendPanel({
   board,
   selectedId,
   busy,
+  finished = false,
   onSpend,
 }: {
   board: Board;
   selectedId: string | null;
   busy: boolean;
+  finished?: boolean;
   onSpend: (card: Card, source: WorkStage, points: number) => void;
 }) {
   const [source, setSource] = useState<WorkStage | "">("");
@@ -190,7 +225,10 @@ export function SpendPanel({
   const available = chosen?.points_left ?? 1;
   const amount = Math.min(Math.max(points, 1), available);
   const workable =
-    card !== undefined && WORK_STAGES.some((stage) => stage === card.stage) && chosen !== undefined;
+    !finished &&
+    card !== undefined &&
+    WORK_STAGES.some((stage) => stage === card.stage) &&
+    chosen !== undefined;
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -200,7 +238,9 @@ export function SpendPanel({
   };
 
   let hint = "";
-  if (card === undefined) {
+  if (finished) {
+    hint = "The game is over, so points can no longer be spent.";
+  } else if (card === undefined) {
     hint = "Press “Work on it” on a card in Analysis, Development or Testing.";
   } else if (!WORK_STAGES.some((stage) => stage === card.stage)) {
     hint = "This card is not in a work stage. Pick another one.";

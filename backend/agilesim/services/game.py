@@ -414,11 +414,13 @@ class GameService:
         if source.code != STAGE_DEVELOPMENT or target.code != STAGE_DEVELOPMENT:
             raise RuleViolationError("Card blocked: only Development points can unblock it")
         if body.points > points_left:
-            raise RuleViolationError(f"Only {points_left} points left")
+            noun = "point" if points_left == 1 else "points"
+            raise RuleViolationError(f"Only {points_left} {noun} left")
         done = self._repo.unblock_progress(card.id, target.id, card.updated_at)
         needed = BLOCK_RELEASE_POINTS - done
         if body.points > needed:
-            raise RuleViolationError(f"Only {needed} more points are needed to unblock the card")
+            noun = "point is" if needed == 1 else "points are"
+            raise RuleViolationError(f"Only {needed} more {noun} needed to unblock the card")
         try:
             # The log row says "points spent in Development"; no square is crossed out, the
             # points went to the block, which is why the response reports zero squares.

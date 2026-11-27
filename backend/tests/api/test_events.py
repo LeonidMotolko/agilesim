@@ -168,9 +168,7 @@ def test_three_development_points_remove_the_block_and_do_not_advance_the_card(
 
     too_many = game.spend(9, "development", 2)
     assert too_many.status_code == 422
-    assert (
-        "Only 1 more points are needed to unblock the card" in too_many.json()["error"]["message"]
-    )
+    assert "Only 1 more point is needed to unblock the card" in too_many.json()["error"]["message"]
 
     last = game.spend(9, "development", 1)
     assert last.status_code == 200

@@ -89,7 +89,7 @@ export function SessionPage() {
         <TeamsPanel
           sessionId={game.id}
           teams={teamList}
-          canAdd={game.status !== "finished"}
+          canAdd={game.status === "lobby"}
           onChanged={teams.reload}
         />
         <EventsPanel sessionId={game.id} running={running} />

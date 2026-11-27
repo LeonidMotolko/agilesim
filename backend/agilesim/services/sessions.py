@@ -77,8 +77,9 @@ class SessionService:
 
     def add_team(self, session_id: uuid.UUID, facilitator_id: uuid.UUID, name: str) -> Team:
         game = self.owned(session_id, facilitator_id)
-        if game.status is SessionStatus.FINISHED:
-            raise ConflictError("The session is finished")
+        if game.status is not SessionStatus.LOBBY:
+            # a team added later would never get its cards, so teams are fixed at the start
+            raise ConflictError("Teams can only be added before the game starts")
         if self._teams.name_exists(game.id, name):
             raise ConflictError("A team with this name already exists in the session")
         try:
