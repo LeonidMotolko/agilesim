@@ -94,6 +94,24 @@ def test_teams_are_created_and_names_are_unique_per_session(client: TestClient) 
     assert [t["name"] for t in listing.json()] == ["Alpha"]
 
 
+@pytest.mark.parametrize("status", [SessionStatus.RUNNING, SessionStatus.FINISHED])
+def test_teams_cannot_be_added_after_the_game_has_started(
+    client: TestClient, db, status: SessionStatus
+) -> None:
+    headers = register_facilitator(client, "late@example.com")
+    session = create_session(client, headers)
+    game = db.get(GameSession, uuid.UUID(session["id"]))
+    game.status = status
+    db.flush()
+
+    response = client.post(
+        f"/v1/sessions/{session['id']}/teams", json={"name": "Late"}, headers=headers
+    )
+
+    assert response.status_code == 409
+    assert "before the game starts" in response.json()["error"]["message"]
+
+
 def test_only_the_owner_can_add_teams(client: TestClient) -> None:
     owner = register_facilitator(client, "to@example.com")
     other = register_facilitator(client, "tother@example.com")

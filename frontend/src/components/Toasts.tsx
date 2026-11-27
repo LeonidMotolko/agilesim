@@ -45,7 +45,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (message: string, kind: ToastKind = "info") => {
       const id = nextId.current;
       nextId.current += 1;
-      setToasts((current) => [...current.slice(-(MAX_TOASTS - 1)), { id, kind, message }]);
+      // The same message again replaces the one on screen instead of stacking up beside it.
+      setToasts((current) => [
+        ...current.filter((toast) => toast.message !== message).slice(-(MAX_TOASTS - 1)),
+        { id, kind, message },
+      ]);
       timers.current.push(
         window.setTimeout(() => dismiss(id), kind === "error" ? ERROR_MS : INFO_MS),
       );

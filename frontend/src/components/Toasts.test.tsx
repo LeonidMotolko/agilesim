@@ -55,4 +55,18 @@ describe("toasts", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
+
+  it("shows a repeated message once instead of stacking copies", () => {
+    render(
+      <ToastProvider>
+        <Buttons />
+      </ToastProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "error" }));
+    fireEvent.click(screen.getByRole("button", { name: "error" }));
+    fireEvent.click(screen.getByRole("button", { name: "error" }));
+
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
 });

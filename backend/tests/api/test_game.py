@@ -213,7 +213,9 @@ def test_dice_show_up_on_the_board_with_points_left(game: Game, dice: list[int])
     assert game.board()["dice"] == [{"stage": "analysis", "day": 1, "value": 6, "points_left": 4}]
 
 
-def test_only_a_player_of_the_team_can_roll(client: TestClient, db: Session, game: Game):
+def test_only_a_player_of_the_team_can_roll(client: TestClient, db: Session):
+    # the second team must exist before the start: teams are fixed once the game runs
+    game = new_game(client, db, start=False)
     other_team = create_team(client, game.facilitator, game.session_id, "Beta")
     outsider = join(
         client,
@@ -221,6 +223,8 @@ def test_only_a_player_of_the_team_can_roll(client: TestClient, db: Session, gam
         "Boris",
         other_team["id"],
     )
+    started = client.post(f"/v1/sessions/{game.session_id}/start", headers=game.facilitator)
+    assert started.status_code == 200, started.text
     response = client.post(
         f"/v1/teams/{game.team_id}/dice",
         json={"stage": "analysis"},
