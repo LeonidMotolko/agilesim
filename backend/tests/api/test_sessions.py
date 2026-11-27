@@ -112,6 +112,18 @@ def test_teams_cannot_be_added_after_the_game_has_started(
     assert "before the game starts" in response.json()["error"]["message"]
 
 
+def test_team_names_differ_by_more_than_letter_case(client: TestClient) -> None:
+    headers = register_facilitator(client, "case@example.com")
+    session = create_session(client, headers)
+    create_team(client, headers, session["id"], "Alpha")
+
+    duplicate = client.post(
+        f"/v1/sessions/{session['id']}/teams", json={"name": "alpha"}, headers=headers
+    )
+
+    assert duplicate.status_code == 409
+
+
 def test_only_the_owner_can_add_teams(client: TestClient) -> None:
     owner = register_facilitator(client, "to@example.com")
     other = register_facilitator(client, "tother@example.com")
@@ -188,6 +200,19 @@ def test_a_name_can_be_used_once_per_session(client: TestClient) -> None:
     response = client.post(
         "/v1/join",
         json={"join_code": session["join_code"], "display_name": "Anna", "consent": True},
+    )
+
+    assert response.status_code == 409
+
+
+def test_player_names_differ_by_more_than_letter_case(client: TestClient) -> None:
+    headers = register_facilitator(client, "pcase@example.com")
+    session = create_session(client, headers)
+    join(client, session["join_code"], "Anna")
+
+    response = client.post(
+        "/v1/join",
+        json={"join_code": session["join_code"], "display_name": "ANNA", "consent": True},
     )
 
     assert response.status_code == 409

@@ -85,7 +85,9 @@ class TeamRepository:
     def name_exists(self, session_id: uuid.UUID, name: str) -> bool:
         return (
             self._session.scalars(
-                sa.select(Team.id).where(Team.session_id == session_id, Team.name == name)
+                sa.select(Team.id).where(
+                    Team.session_id == session_id, sa.func.lower(Team.name) == name.lower()
+                )
             ).first()
             is not None
         )
@@ -113,7 +115,8 @@ class ParticipantRepository:
         return (
             self._session.scalars(
                 sa.select(Participant.id).where(
-                    Participant.session_id == session_id, Participant.display_name == display_name
+                    Participant.session_id == session_id,
+                    sa.func.lower(Participant.display_name) == display_name.lower(),
                 )
             ).first()
             is not None
